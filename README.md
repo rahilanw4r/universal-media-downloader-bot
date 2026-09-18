@@ -9,7 +9,7 @@
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v20%2B-blue?logo=telegram)](https://core.telegram.org/bots/api)
 [![yt-dlp](https://img.shields.io/badge/Powered%20By-yt--dlp-red?logo=youtube)](https://github.com/yt-dlp/yt-dlp)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![CI Tests](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com)
+[![CI Tests](https://github.com/RahilAnw4r/universal-media-downloader-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/RahilAnw4r/universal-media-downloader-bot/actions)
 
 [Live Bot Demo](https://t.me/UniversalMediaSaverBot) • [Report Bug](.github/ISSUE_TEMPLATE/bug_report.md) • [Request Feature](.github/ISSUE_TEMPLATE/feature_request.md)
 
@@ -54,8 +54,8 @@
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/media-downloader-bot.git
-cd media-downloader-bot
+git clone https://github.com/RahilAnw4r/universal-media-downloader-bot.git
+cd universal-media-downloader-bot
 ```
 
 ### 2. Install dependencies

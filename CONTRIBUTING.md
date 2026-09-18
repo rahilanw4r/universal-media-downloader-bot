@@ -9,8 +9,8 @@ Thank you for your interest in contributing to this open-source project! We welc
 1. **Fork the repository** on GitHub.
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/media-downloader-bot.git
-   cd media-downloader-bot
+   git clone https://github.com/RahilAnw4r/universal-media-downloader-bot.git
+   cd universal-media-downloader-bot
    ```
 3. **Create a virtual environment**:
    ```bash
