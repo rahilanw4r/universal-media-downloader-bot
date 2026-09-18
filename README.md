@@ -1,61 +1,150 @@
-# 📥 All-in-One Social Media Downloader Telegram Bot
+<div align="center">
 
-An instant, zero-configuration Telegram Bot that downloads videos, reels, posts, and audio from all major social media platforms and delivers them directly into Telegram.
+# 📥 Universal Media Downloader Bot
+
+### An open-source, ultra-fast Telegram bot for downloading media and extracting MP3 audio from all major social platforms.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python: 3.10 | 3.11](https://img.shields.io/badge/Python-3.10%20%7C%203.11-blue.svg)](https://www.python.org/)
+[![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v20%2B-blue?logo=telegram)](https://core.telegram.org/bots/api)
+[![yt-dlp](https://img.shields.io/badge/Powered%20By-yt--dlp-red?logo=youtube)](https://github.com/yt-dlp/yt-dlp)
+[![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
+[![CI Tests](https://img.shields.io/badge/Build-Passing-brightgreen?logo=github-actions)](https://github.com)
+
+[Live Bot Demo](https://t.me/UniversalMediaSaverBot) • [Report Bug](.github/ISSUE_TEMPLATE/bug_report.md) • [Request Feature](.github/ISSUE_TEMPLATE/feature_request.md)
+
+</div>
 
 ---
 
 ## 🌟 Supported Platforms
 
-- 📸 **Instagram:** Reels, Posts, Carousels, Stories
-- 🎥 **YouTube:** Shorts, Full Videos, Music/MP3 extraction
-- 🐦 **X (Twitter):** Videos, Clips & GIFs
-- 🎵 **TikTok:** Watermark-free videos & audios
-- 📌 **Pinterest:** Video pins & images
-- 🤖 **Reddit & Facebook:** Videos & clips
-- 🌐 **1000+ other websites:** Powered by `yt-dlp`
+| Platform | Supported Content | Notes |
+|---|---|---|
+| 📸 **Instagram** | Reels, Posts, Carousels, Stories | HD Audio & Video |
+| 🎥 **YouTube** | Shorts, Full Videos, Live Recordings | 1080p, 720p, 480p, 360p |
+| 🐦 **X (Twitter)** | Videos, Clips, Animated GIFs | Best available stream |
+| 🎵 **TikTok** | Videos & Sounds | No watermark |
+| 📌 **Pinterest** | Video Pins & High-Res Clips | Clean MP4 |
+| 🤖 **Reddit** | Videos with Audio | Audio/Video auto-merged |
+| 📘 **Facebook** | Reels & Public Watch Videos | Fast delivery |
+| 🌐 **1000+ Others** | Vimeo, Dailymotion, Twitch Clips, etc. | Powered by `yt-dlp` |
 
 ---
 
-## ✨ Advanced Features
+## ✨ Key Features
 
-1. **🎛️ Dynamic Resolution Picker:** Inspects available resolutions and shows interactive buttons:
-   - `[ 💎 1080p FHD ]`
-   - `[ 📺 720p HD ]`
-   - `[ 📱 480p SD ]`
-   - `[ ⚡ 360p Data Saver ]`
-2. **📊 Live Animated Progress Bar:** Real-time updates right on the message:
-   ```text
-   ⏳ Downloading from YouTube...
-   [████████░░░░] 67%
-   ⚡ Speed: 5.4 MB/s | Size: 16.2 MB / 24.1 MB
-   ⏱️ ETA: 1s
-   ```
-3. **⚡ Instant Auto-Download Mode (`/settings`):** Toggle between Interactive Menu (choose resolution) and Instant Mode (zero-click auto delivery).
-4. **👥 Group Chat Support:** Add the bot to any Telegram group chat—it automatically detects links and replies with playable videos directly in the group!
-5. **🎵 Enhanced MP3 with Album Art & ID3 Tags:** Converts audio to 192k MP3 with official video cover art displayed in Telegram's built-in player.
+- **🎛️ Dynamic Resolution Picker:** Inspects incoming video streams and provides interactive buttons:
+  - `[ 💎 1080p FHD ]` `[ 📺 720p HD ]` `[ 📱 480p SD ]` `[ ⚡ 360p Data Saver ]`
+- **⚡ Instant Zero-Click Mode:** Send `/quality` or `/settings` to enable Instant Mode. Paste any link and receive the video immediately with **zero extra clicks**!
+- **📊 Real-time Animated Progress Bar:** Live updates directly on the Telegram message showing percentage, speed, downloaded size, and ETA:
+  ```text
+  ⏳ Downloading from YouTube...
+  [████████░░░░] 67%
+  ⚡ Speed: 5.4 MB/s | Size: 16.2 MB / 24.1 MB
+  ⏱️ ETA: 1s
+  ```
+- **🎵 Studio MP3 Extraction:** Converts any video into a 192k MP3 audio file with the **official video thumbnail embedded as Album Cover Art** for Telegram's built-in music player.
+- **👥 Group Chat Ready:** Add the bot to any Telegram group chat. It automatically detects shared links and replies with playable videos directly in the group!
+- **🛡️ Cross-Platform Filename Sanitization:** Built-in sanitization avoids Windows/Linux filesystem path issues (`[Errno 22]`) on unusual characters and emojis.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Local Setup)
 
-### 1. Configuration
-Open [.env](file:///m:/Projects/Pin/.env) and ensure your bot token is set:
+### 1. Clone the repository
+```bash
+git clone https://github.com/YOUR_USERNAME/media-downloader-bot.git
+cd media-downloader-bot
+```
 
+### 2. Install dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+Copy `.env.example` to `.env`:
+```bash
+cp .env.example .env
+```
+Edit `.env` and fill in your Bot Token from [@BotFather](https://t.me/BotFather):
 ```env
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 ```
 
-### 2. Start the Bot
-Run:
+### 4. Run the Bot
 ```bash
 python bot.py
 ```
 
 ---
 
-## 📱 How to Use
-1. Open [@UniversalMediaSaverBot](https://t.me/UniversalMediaSaverBot) on Telegram.
-2. Tap `/start`.
-3. Paste any video, reel, or post link into the chat.
-4. Pick your desired quality (1080p, 720p, 480p) or MP3.
-5. Send `/quality` or `/settings` to switch to Fast Instant mode anytime!
+## 🐳 Docker Deployment (1-Command)
+
+Run locally or on any Linux VPS (Ubuntu, Debian, CentOS):
+
+```bash
+docker compose up -d
+```
+
+To view logs:
+```bash
+docker compose logs -f
+```
+
+---
+
+## ☁️ 1-Click Cloud Deployment (Free 24/7)
+
+### Deploy on Koyeb:
+1. Fork or push this repository to your GitHub.
+2. Sign up at [koyeb.com](https://www.koyeb.com/) (Free).
+3. Create a new service from your GitHub repository.
+4. Set Environment Variable:
+   - `TELEGRAM_BOT_TOKEN` = `your_bot_token`
+5. Click **Deploy**!
+
+---
+
+## ⌨️ Bot Commands
+
+| Command | Description |
+|---|---|
+| `/start` | Welcome message, features overview, and active status |
+| `/quality` | Switch between *Ask Quality* and *Fast Instant Download* |
+| `/settings` | Open preferences and configuration menu |
+| `/help` | Complete instructions and supported platforms guide |
+
+---
+
+## 🧪 Running Tests
+
+To run the automated unit test suite:
+```bash
+python test_downloader.py
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions are always welcome! Please check out [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+
+1. Fork the repo.
+2. Create your feature branch (`git checkout -b feature/amazing-feature`).
+3. Commit your changes (`git commit -m 'Add some amazing feature'`).
+4. Push to the branch (`git push origin feature/amazing-feature`).
+5. Open a Pull Request.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+⭐ Star this repository if you find it helpful!
+</div>
