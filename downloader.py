@@ -387,6 +387,70 @@ class MediaDownloader:
             "qualities": qualities,
         }
 
+    def _compress_video_to_fit(self, input_path: Path, temp_dir: Path, duration: float) -> Optional[Path]:
+        """
+        Compress video using FFmpeg to fit under Telegram's 50 MB limit (~46 MB target).
+        Calculates optimal video & audio bitrates based on duration.
+        """
+        if duration <= 0:
+            try:
+                cmd = [FFMPEG_EXE, "-i", str(input_path)]
+                proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=10)
+                match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", proc.stderr)
+                if match:
+                    hours, mins, secs = match.groups()
+                    duration = int(hours) * 3600 + int(mins) * 60 + float(secs)
+            except Exception:
+                duration = 600
+
+        if duration <= 0:
+            duration = 600
+
+        # Don't attempt to compress ultra-long videos (> 45 minutes) as quality degrades too much
+        if duration > 2700:
+            return None
+
+        output_path = temp_dir / f"compressed_{input_path.stem}.mp4"
+
+        # Target: 45.5 MB (safe margin for Telegram 50 MB limit)
+        target_size_bits = 45.5 * 1024 * 1024 * 8
+        total_bitrate = int(target_size_bits / duration)
+
+        audio_bitrate = min(96000, max(48000, int(total_bitrate * 0.15)))
+        video_bitrate = max(150000, total_bitrate - audio_bitrate)
+
+        # Scale resolution down to 480p or 720p if needed to preserve visual quality
+        scale_filter = "scale='min(854,iw)':-2" if video_bitrate < 650000 else "scale='min(1280,iw)':-2"
+
+        cmd = [
+            FFMPEG_EXE,
+            "-y",
+            "-i", str(input_path),
+            "-c:v", "libx264",
+            "-b:v", f"{video_bitrate}",
+            "-maxrate", f"{int(video_bitrate * 1.3)}",
+            "-bufsize", f"{int(video_bitrate * 2)}",
+            "-vf", scale_filter,
+            "-preset", "veryfast",
+            "-c:a", "aac",
+            "-b:a", f"{audio_bitrate}",
+            "-movflags", "+faststart",
+            str(output_path),
+        ]
+
+        try:
+            logger.info("Compressing video (%s) to fit 50MB (bitrate: %d bps)...", input_path.name, video_bitrate)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=300)
+            if output_path.exists() and output_path.stat().st_size > 0:
+                compressed_size_mb = output_path.stat().st_size / (1024 * 1024)
+                if compressed_size_mb <= 49.5:
+                    logger.info("Auto-compression succeeded: %.1f MB", compressed_size_mb)
+                    return output_path
+        except Exception as e:
+            logger.warning("Auto-compression failed: %s", e)
+
+        return None
+
     def _download_ytdlp(
         self,
         url: str,
@@ -401,10 +465,15 @@ class MediaDownloader:
             format_spec = (
                 f"bestvideo[height<={resolution}][filesize<=48M]+bestaudio/"
                 f"best[height<={resolution}][filesize<=48M]/"
+                f"bestvideo[height<={resolution}]+bestaudio/"
                 f"best[height<={resolution}]/best"
             )
         else:
-            format_spec = "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/best[height<=1080]/best"
+            format_spec = (
+                "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/"
+                "bestvideo[height<=720]+bestaudio/best[height<=720]/"
+                "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+            )
 
         ydl_opts.update({
             "paths": {"home": temp_dir.as_posix()},
@@ -459,15 +528,30 @@ class MediaDownloader:
 
         filesize = sum(f.stat().st_size for f in out_files)
         filesize_mb = filesize / (1024 * 1024)
+        duration = (info or {}).get("duration", 0)
+
+        # Smart Auto-Compression: if video exceeds Telegram's 50MB limit, compress it
+        if filesize_mb > 49.5 and media_type == "video":
+            logger.info("Video (%.1f MB) exceeds 50 MB, attempting auto-compression...", filesize_mb)
+            compressed_file = self._compress_video_to_fit(target_file, temp_dir, duration)
+            if compressed_file:
+                target_file = compressed_file
+                out_files = [target_file]
+                filesize = target_file.stat().st_size
+                filesize_mb = filesize / (1024 * 1024)
 
         if filesize_mb > 50:
+            dur_mins = int(duration // 60) if duration else 0
+            dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
             raise DownloaderError(
-                f"Media is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit)."
+                f"Video is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit){dur_msg}.\n\n"
+                f"💡 Tips to download this video:\n"
+                f"1. Send /mode to switch to Quality Picker, then select 480p SD or 360p Low.\n"
+                f"2. Or send /mp3 <link> to extract the full audio track!"
             )
 
         title = (info or {}).get("title", "Video")
         uploader = (info or {}).get("uploader") or (info or {}).get("channel", "Unknown")
-        duration = (info or {}).get("duration", 0)
         thumbnail = (info or {}).get("thumbnail")
 
         return {
