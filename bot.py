@@ -1,8 +1,11 @@
+import os
 import sys
 import html
 import time
 import asyncio
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from telegram import (
@@ -473,11 +476,40 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+class HealthHandler(BaseHTTPRequestHandler):
+    """Simple HTTP handler to satisfy cloud health checks and enable keep-alive pings."""
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK - Universal Media Downloader Bot is running!\n")
+
+    def log_message(self, format, *args):
+        # Suppress periodic health check logs to keep terminal output clean
+        pass
+
+
+def start_health_server():
+    """Start lightweight HTTP server in a daemon thread for cloud hosting (e.g. Render)."""
+    port = int(os.environ.get("PORT", "8080"))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info("Health check server active on port %d", port)
+    except Exception as e:
+        logger.warning("Could not start health check server on port %d: %s", port, e)
+
+
 def main():
     """Start the Telegram Downloader Bot."""
     if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
         print("❌ Error: TELEGRAM_BOT_TOKEN is not set in .env!")
         return
+
+    # Start health check server for cloud hosting platforms (Render, Koyeb, etc.)
+    start_health_server()
 
     print("🚀 Initializing Universal Media Downloader Bot...")
     app = (
