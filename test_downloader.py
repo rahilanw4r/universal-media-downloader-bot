@@ -4,6 +4,7 @@ from downloader import (
     find_urls,
     detect_platform,
     is_pinterest_url,
+    resolve_pinterest_url,
     is_twitter_url,
     render_progress_bar,
     MediaDownloader,
@@ -44,6 +45,10 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_pinterest_url("https://www.pinterest.com/pin/123456/"))
         self.assertTrue(is_pinterest_url("https://pin.it/abc1234"))
         self.assertFalse(is_pinterest_url("https://youtube.com/watch?v=123"))
+        self.assertEqual(
+            resolve_pinterest_url("https://www.pinterest.com/pin/123456/"),
+            "https://www.pinterest.com/pin/123456/",
+        )
 
         self.assertTrue(is_twitter_url("https://x.com/NASA/status/1783547844005695627"))
         self.assertTrue(is_twitter_url("https://twitter.com/user/status/123"))

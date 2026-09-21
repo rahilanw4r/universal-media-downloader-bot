@@ -76,6 +76,25 @@ def is_pinterest_url(url: str) -> bool:
     return "pinterest.com" in url_lower or "pin.it" in url_lower
 
 
+def resolve_pinterest_url(url: str) -> str:
+    """Resolve shortened pin.it redirects to the canonical pinterest.com URL."""
+    url_lower = url.lower()
+    if "pin.it" in url_lower:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+        }
+        try:
+            r = requests.get(url, headers=headers, allow_redirects=True, timeout=10)
+            if r.url and "pinterest.com" in r.url:
+                return r.url
+        except Exception:
+            pass
+    return url
+
+
 def is_twitter_url(url: str) -> bool:
     """Check if URL belongs to X / Twitter."""
     url_lower = url.lower()
@@ -121,27 +140,74 @@ class MediaDownloader:
             # Bypass YouTube "Sign in to confirm you're not a bot" on datacenter/cloud IPs
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "ios", "tv", "web"],
+                    "player_client": ["android", "android_vr"],
                     "player_skip": ["webpage", "configs"],
                 }
             },
         }
-        if getattr(config, "COOKIES_FILE", None):
+        if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
             opts["cookiefile"] = str(config.COOKIES_FILE)
         return opts
 
     def _download_pinterest(self, url: str, temp_dir: Path) -> Dict[str, Any]:
-        """Download Pinterest image or video pin using pinterest-downloader."""
+        """Download Pinterest image or video pin using direct extraction or pinterest-downloader."""
         if not Pinterest:
             raise DownloaderError("Pinterest downloader library is not installed.")
 
+        url = resolve_pinterest_url(url)
         p = Pinterest()
+
+        # 1. Try to inspect pin metadata first to extract direct 720p MP4 or high-res photo
+        try:
+            pin_res = p.get_pin(url)
+            if pin_res.get("ok"):
+                pin_data = pin_res.get("pin", {})
+                title = pin_data.get("title") or pin_data.get("description") or "Pinterest Pin"
+                author = pin_res.get("author", {}).get("username") or "Pinterest"
+
+                # Check for direct MP4 video stream
+                if pin_data.get("media_type") == "video":
+                    formats = (pin_data.get("video") or {}).get("formats") or []
+                    mp4_formats = [f for f in formats if ".mp4" in f.get("url", "").lower()]
+                    if mp4_formats:
+                        p720 = [f for f in mp4_formats if "720p" in f.get("url", "").lower() or f.get("quality") == "V_EXP7"]
+                        best_vid = p720[0] if p720 else mp4_formats[0]
+                        vid_url = best_vid.get("url")
+                        if vid_url:
+                            vid_path = temp_dir / f"{pin_data.get('id', 'pin')}.mp4"
+                            headers = {
+                                "User-Agent": (
+                                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                                )
+                            }
+                            resp = requests.get(vid_url, headers=headers, stream=True, timeout=30)
+                            if resp.status_code == 200:
+                                with open(vid_path, "wb") as f:
+                                    for chunk in resp.iter_content(chunk_size=65536):
+                                        if chunk:
+                                            f.write(chunk)
+                                mb = vid_path.stat().st_size / (1024 * 1024)
+                                return {
+                                    "type": "video",
+                                    "file_path": vid_path,
+                                    "file_paths": [vid_path],
+                                    "dir_path": temp_dir,
+                                    "title": title,
+                                    "uploader": author,
+                                    "duration": (pin_data.get("video") or {}).get("duration", 0) / 1000,
+                                    "thumbnail": (pin_data.get("video") or {}).get("poster"),
+                                    "filesize_mb": mb,
+                                }
+        except Exception as e:
+            logger.debug("Direct Pinterest inspection error: %s", e)
+
+        # 2. Download via download_pin
         res = p.download_pin(url, path=str(temp_dir))
         if not res.get("ok"):
             err = res.get("error", {}).get("message") or "Failed to download Pinterest pin"
             raise DownloaderError(f"Pinterest error: {err}")
 
-        media_type = res.get("media_type", "image")
         downloaded_path = Path(res.get("path"))
         if not downloaded_path.exists():
             files = list(temp_dir.glob("*"))
@@ -153,7 +219,8 @@ class MediaDownloader:
         if filesize_mb > 50:
             raise DownloaderError(f"File is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit).")
 
-        out_type = "video" if media_type == "video" or downloaded_path.suffix.lower() in VIDEO_EXTS else "photo"
+        # Strictly determine output type by actual saved file extension
+        out_type = "video" if downloaded_path.suffix.lower() in VIDEO_EXTS else "photo"
 
         return {
             "type": out_type,
@@ -324,6 +391,9 @@ class MediaDownloader:
         Extract available resolutions and metadata for interactive quality buttons.
         Returns title, uploader, thumbnail, duration, and list of available qualities.
         """
+        if is_pinterest_url(url):
+            url = resolve_pinterest_url(url)
+
         def _probe():
             opts = self._get_ydl_base_opts()
             opts.update({
@@ -581,19 +651,17 @@ class MediaDownloader:
     ) -> Dict[str, Any]:
         """
         Main media downloader entrypoint.
-        Routes to Pinterest, Twitter, yt-dlp, or gallery-dl.
+        Routes to Twitter fast extractor, yt-dlp (YouTube, Pinterest video, Instagram, TikTok, etc.),
+        and specialized fallbacks (Pinterest photo downloader, gallery-dl).
         """
         temp_dir = Path(tempfile.mkdtemp(dir=str(self.download_dir)))
 
-        try:
-            # 1. Specialized Pinterest Downloader
-            if is_pinterest_url(url) and Pinterest:
-                try:
-                    return await asyncio.to_thread(self._download_pinterest, url, temp_dir)
-                except Exception as e:
-                    logger.warning(f"Pinterest engine error, trying fallback: {e}")
+        # Resolve Pinterest pin.it redirects upfront
+        if is_pinterest_url(url):
+            url = resolve_pinterest_url(url)
 
-            # 2. Specialized Twitter / X Downloader
+        try:
+            # 1. Specialized Twitter / X Downloader (instant direct photo/video extraction)
             if is_twitter_url(url):
                 try:
                     tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)
@@ -602,16 +670,25 @@ class MediaDownloader:
                 except Exception as e:
                     logger.warning(f"Twitter engine error, trying fallback: {e}")
 
-            # 3. Standard yt-dlp download
+            # 2. Main yt-dlp download (handles YouTube, Pinterest videos, Instagram, TikTok, Reddit, Facebook, etc.)
             try:
                 return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, resolution, progress_callback)
-            except Exception as e:
-                # 4. Fallback to gallery-dl for posts without video streams
-                logger.info(f"Trying gallery-dl fallback for {url} due to: {e}")
+            except Exception as ytdl_err:
+                logger.info(f"yt-dlp attempt failed for {url}: {ytdl_err}")
+
+                # 3. Fallback to specialized Pinterest handler (for image pins or pins with no video streams)
+                if is_pinterest_url(url) and Pinterest:
+                    try:
+                        return await asyncio.to_thread(self._download_pinterest, url, temp_dir)
+                    except Exception as pin_err:
+                        logger.warning(f"Pinterest fallback error: {pin_err}")
+
+                # 4. Fallback to gallery-dl for posts without video streams (Instagram photos, carousels, Pinterest images)
                 gdl_res = await asyncio.to_thread(self._download_gallery_dl, url, temp_dir)
                 if gdl_res:
                     return gdl_res
-                raise DownloaderError(f"Download failed: {e}")
+
+                raise DownloaderError(f"Download failed: {ytdl_err}")
 
         except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -625,6 +702,9 @@ class MediaDownloader:
         """
         Download audio as 192k MP3 with embedded metadata & official album art.
         """
+        if is_pinterest_url(url):
+            url = resolve_pinterest_url(url)
+
         temp_dir = Path(tempfile.mkdtemp(dir=str(self.download_dir)))
 
         ydl_opts = self._get_ydl_base_opts()

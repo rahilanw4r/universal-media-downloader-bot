@@ -22,9 +22,19 @@ ALLOWED_TELEGRAM_USER_IDS = [
     int(uid.strip()) for uid in _allowed_raw.split(",") if uid.strip().isdigit()
 ]
 
-# Optional: Path to cookies.txt for platforms requiring login (Instagram, etc.)
+# Optional: Path to cookies.txt or direct cookies content from environment variable
+_cookies_content = os.getenv("COOKIES_CONTENT", "").strip() or os.getenv("YOUTUBE_COOKIES", "").strip()
 _cookies_env = os.getenv("COOKIES_FILE", "").strip()
-if _cookies_env and Path(_cookies_env).exists():
+
+if _cookies_content:
+    c_file = BASE_DIR / "cookies.txt"
+    try:
+        with open(c_file, "w", encoding="utf-8") as f:
+            f.write(_cookies_content)
+        COOKIES_FILE = c_file
+    except Exception:
+        COOKIES_FILE = None
+elif _cookies_env and Path(_cookies_env).exists():
     COOKIES_FILE = Path(_cookies_env).resolve()
 elif (BASE_DIR / "cookies.txt").exists():
     COOKIES_FILE = BASE_DIR / "cookies.txt"
