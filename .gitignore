@@ -1,16 +1,34 @@
 # Environment & Secrets (Never commit bot tokens to public GitHub!)
 .env
+.env.*
+!.env.example
+*.env
+*.key
+*.pem
+*.token
 
-# Python cache
+# Cookies & Sessions
+*.session
+*.session-journal
+cookies.txt
+*.cookie
+
+# Logs & scratch
+*.log
+scratch/
+
+# Python cache & virtual environments
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyc
+.pytest_cache/
+venv/
+env/
+.venv/
 
-# Local Downloads
+# Local Downloads & user data
 downloads/
-
-# User local preferences
 user_preferences.json
 
 # IDE & OS files
