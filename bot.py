@@ -131,33 +131,26 @@ async def check_user_auth(update: Update) -> bool:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command with rich greeting and quick settings buttons."""
+    """Handle /start command with rich greeting, command directory, and quick buttons."""
     if not await check_user_auth(update):
         return
 
     user = update.effective_user
-    user_id = user.id
-    current_mode = config.get_user_mode(user_id)
-    mode_badge = "⚡ Instant Mode (Auto-download)" if current_mode == "instant" else "🔘 Quality Picker Mode"
+    current_mode = config.get_user_mode(user.id)
+    mode_text = "⚡ Instant Auto-Download" if current_mode == "instant" else "🔘 Quality Selector (1080p/720p/480p)"
 
     welcome_text = (
-        f"👋 <b>Welcome, {html.escape(user.first_name)}!</b>\n\n"
-        f"I am your <b>Universal Media Downloader</b> 📥\n"
-        f"Send me any link to download videos, photos, carousels, or audio!\n\n"
-        f"⚙️ <b>Active Mode:</b> <code>{mode_badge}</code>\n"
-        f"<i>(Send <code>/mode</code> to switch between Instant and Quality Picker!)</i>\n\n"
-        f"<b>Supported Platforms:</b>\n"
-        f"• 📸 Instagram (Reels, Posts, Carousels)\n"
-        f"• 🎥 YouTube (Shorts & Full HD Videos)\n"
-        f"• 🐦 X / Twitter (Videos, Photos & Multi-Images)\n"
-        f"• 🎵 TikTok (Clean, No Watermark)\n"
-        f"• 📌 Pinterest (Image Pins & HD Video Pins)\n"
-        f"• 🤖 Reddit, Facebook, & 1000+ other sites\n\n"
-        f"👑 <b>Admin / Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n\n"
-        f"<b>How to use:</b>\n"
-        f"• Paste any link into the chat to start!\n"
-        f"• Send <code>/mp3 &lt;link&gt;</code> to extract MP3 audio.\n"
-        f"• Send <code>/mode</code> to toggle Instant vs Quality Picker."
+        f"👋 <b>Hello, {html.escape(user.first_name)}!</b>\n\n"
+        f"Welcome to <b>Universal Media Downloader</b> 📥\n"
+        f"Download videos, photos, carousels & music from <b>Instagram, YouTube, TikTok, X (Twitter), Pinterest, Reddit</b> & 1,000+ sites.\n\n"
+        f"⚙️ <b>Current Mode:</b> <code>{mode_text}</code>\n\n"
+        f"📌 <b>Quick Commands:</b>\n"
+        f"• <b>Paste any link</b> — Auto-download media\n"
+        f"• <code>/mode</code> — Toggle Instant vs Quality Picker\n"
+        f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
+        f"• <code>/help</code> — Full guide & group chat instructions\n"
+        f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
+        f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
     keyboard = [
@@ -184,27 +177,27 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     help_text = (
-        "📖 <b>Universal Downloader — Complete Manual</b>\n"
+        "📖 <b>Universal Downloader — User Manual</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⚡ <b>1. Instant Mode vs Quality Picker:</b>\n"
-        "• <b>Instant Mode (Default):</b> Paste any link and your video or photo is downloaded and delivered immediately with zero clicks.\n"
-        "• <b>Quality Picker Mode:</b> Asks you to select your desired resolution (1080p, 720p, 480p) or MP3 before downloading.\n"
-        "👉 <i>Send <code>/mode</code> anytime to flip between Instant and Quality Picker!</i>\n\n"
-        "🎵 <b>2. Studio MP3 with Album Art:</b>\n"
-        "• Send <code>/mp3 &lt;url&gt;</code> or <code>/audio &lt;url&gt;</code> to extract crystal-clear 192k audio.\n"
-        "• Or tap the <b>Extract MP3</b> button attached under any downloaded video!\n\n"
-        "👥 <b>3. Group Chats:</b>\n"
-        "Add this bot to any group chat. When any member posts a link, the bot delivers the media directly in the group.\n\n"
-        "👑 <b>4. Admin & Support:</b>\n"
-        f"Developer / Admin: <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n"
-        "Send <code>/admin</code> to message the developer directly.\n\n"
-        "<b>Available Commands:</b>\n"
-        "• /start - Welcome message & status\n"
-        "• /mode - Switch between Instant Mode & Quality Picker\n"
-        "• /mp3 &lt;url&gt; - Extract MP3 audio track\n"
-        "• /admin - Direct contact with @RahilAnw4r\n"
-        "• /about - Bot info & technical specs\n"
-        "• /help - Display this manual"
+        "📥 <b>How to Download:</b>\n"
+        "1. Send or forward any public video or photo link.\n"
+        "2. The bot delivers the media with a live animated progress bar.\n\n"
+        "⚡ <b>Download Modes (<code>/mode</code>):</b>\n"
+        "• <b>⚡ Instant Mode:</b> Fastest delivery. Best quality downloads automatically without asking.\n"
+        "• <b>🔘 Quality Picker:</b> Shows resolution buttons (1080p, 720p, 480p, MP3) to choose from.\n\n"
+        "🎵 <b>Audio Extraction (<code>/mp3</code>):</b>\n"
+        "• Send <code>/mp3 &lt;link&gt;</code> to extract 192k audio with official album art.\n"
+        "• Or tap <b>Extract MP3</b> directly under any sent video!\n\n"
+        "👥 <b>Group Chats:</b>\n"
+        "Add this bot to any group chat. When any member shares a link, the bot delivers the media directly into the group.\n\n"
+        "📌 <b>All Commands:</b>\n"
+        "• <code>/start</code> — Greeting, status & quick buttons\n"
+        "• <code>/mode</code> — Switch Instant vs Quality Picker\n"
+        "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
+        "• <code>/admin</code> — Contact developer directly\n"
+        "• <code>/about</code> — Bot technical specifications\n"
+        "• <code>/help</code> — Show this manual\n\n"
+        f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
     keyboard = [
@@ -230,7 +223,7 @@ async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id
     current_mode = config.get_user_mode(user_id)
 
-    # Allow optional explicit argument: /mode instant or /mode picker
+    # Support optional explicit argument: /mode instant or /mode picker
     args = context.args or []
     if args:
         requested = args[0].lower().strip()
@@ -249,15 +242,15 @@ async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if is_instant:
         mode_text = (
-            "⚡ <b>Switched to Instant Mode!</b>\n\n"
-            "Links you send will now download immediately in the best available quality without extra menus.\n\n"
-            "👉 <i>Send <code>/mode</code> anytime to switch back to Quality Picker.</i>"
+            "⚙️ <b>Download Mode: ⚡ Instant Mode</b>\n\n"
+            "✅ <b>Active!</b> Links will now download immediately in highest available quality with zero extra clicks.\n\n"
+            "💡 <i>Tap below or send <code>/mode</code> anytime to switch to Quality Picker.</i>"
         )
     else:
         mode_text = (
-            "🔘 <b>Switched to Quality Picker Mode!</b>\n\n"
-            "When you paste a video link, the bot will show interactive buttons so you can pick 1080p, 720p, 480p, or MP3.\n\n"
-            "👉 <i>Send <code>/mode</code> anytime to switch back to Instant Mode.</i>"
+            "⚙️ <b>Download Mode: 🔘 Quality Picker</b>\n\n"
+            "✅ <b>Active!</b> When you send a video link, the bot will display buttons to pick 1080p, 720p, 480p, or MP3.\n\n"
+            "💡 <i>Tap below or send <code>/mode</code> anytime to switch to Instant Mode.</i>"
         )
 
     keyboard = [
@@ -279,12 +272,12 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     admin_text = (
-        "👑 <b>Admin & Developer Contact</b>\n"
+        "👑 <b>Admin & Developer Support</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"• <b>Developer:</b> Rahil Anwar\n"
         f"• <b>Telegram:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n"
         f"• <b>GitHub:</b> <a href=\"https://github.com/rahilanw4r\">github.com/rahilanw4r</a>\n\n"
-        "💬 <i>Need help, want to report a broken link, or have a feature idea? Click below to chat directly!</i>"
+        "💬 <i>Have questions, suggestions, or found a broken link? Click below to chat directly!</i>"
     )
 
     keyboard = [
@@ -307,13 +300,13 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     about_text = (
-        "🤖 <b>Universal Media Downloader Bot</b>\n"
+        "🤖 <b>Universal Media Downloader</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "• <b>Version:</b> 2.0.0 (High-Speed Cloud Edition)\n"
-        f"• <b>Created by:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n"
-        "• <b>Powered by:</b> Python 3.11, yt-dlp, FFmpeg & Gallery-DL\n"
-        "• <b>Features:</b> Instant Auto-Download, Quality Selector (1080p/720p/480p), 192k MP3 with Album Art, Multi-Photo Carousels, 24/7 Cloud Uptime\n\n"
-        f"💬 For inquiries or custom bots, contact <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>."
+        "• <b>Version:</b> 2.1.0 (Cloud Edition)\n"
+        "• <b>Architecture:</b> Python 3.11 • yt-dlp • FFmpeg • Gallery-DL\n"
+        "• <b>Hosting:</b> 24/7 Cloud Active\n"
+        f"• <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n\n"
+        "High-performance media extractor built for speed, quality, and simplicity."
     )
 
     keyboard = [
@@ -376,7 +369,7 @@ async def execute_download(
                 file_path = result["file_path"]
                 caption = (
                     f"🖼️ <b>{html.escape(title[:100])}</b>\n"
-                    f"📁 Source: {html.escape(platform)} | 📦 {filesize_mb:.1f} MB"
+                    f"📁 {html.escape(platform)} • 📦 {filesize_mb:.1f} MB"
                 )
                 if bot_handle:
                     caption += f"\n🤖 {html.escape(bot_handle)}"
@@ -397,7 +390,7 @@ async def execute_download(
                             await context.bot.send_photo(
                                 chat_id=chat_id,
                                 photo=f,
-                                caption=f"🖼️ {title[:100]}\n📁 Source: {platform} | 📦 {filesize_mb:.1f} MB",
+                                caption=f"🖼️ {title[:100]}\n📁 {platform} • 📦 {filesize_mb:.1f} MB",
                                 read_timeout=300,
                                 write_timeout=300,
                             )
@@ -410,7 +403,7 @@ async def execute_download(
                 file_paths: List[Path] = result.get("file_paths", [])
                 caption = (
                     f"📸 <b>{html.escape(title[:100])}</b>\n"
-                    f"📁 Source: {html.escape(platform)} | 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
+                    f"📁 {html.escape(platform)} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
                 )
                 if bot_handle:
                     caption += f"\n🤖 {html.escape(bot_handle)}"
@@ -439,7 +432,7 @@ async def execute_download(
                             for item in media:
                                 item.parse_mode = None
                                 if item.caption:
-                                    item.caption = f"📸 {title[:100]}\n📁 Source: {platform} | 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
+                                    item.caption = f"📸 {title[:100]}\n📁 {platform} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
                                 if hasattr(item.media, "seek"):
                                     item.media.seek(0)
                             await context.bot.send_media_group(
@@ -459,16 +452,16 @@ async def execute_download(
                 await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                 file_path = result["file_path"]
 
-                dur_str = f" | ⏱️ {int(duration)}s" if duration else ""
+                dur_str = f" • ⏱️ {int(duration)}s" if duration else ""
                 res_str = f" ({resolution}p)" if resolution else ""
                 caption = (
                     f"🎬 <b>{html.escape(title[:100])}</b>\n"
-                    f"📁 Source: {html.escape(platform)}{res_str} | 📦 {filesize_mb:.1f} MB{dur_str}"
+                    f"📁 {html.escape(platform)}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}"
                 )
                 if bot_handle:
                     caption += f"\n🤖 {html.escape(bot_handle)}"
 
-                # Quick action buttons under the delivered video: Extract MP3 or toggle mode
+                # Quick action buttons: One-tap MP3 extraction or mode switch
                 post_keyboard = InlineKeyboardMarkup([
                     [
                         InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
@@ -494,7 +487,7 @@ async def execute_download(
                             await context.bot.send_video(
                                 chat_id=chat_id,
                                 video=f,
-                                caption=f"🎬 {title[:100]}\n📁 Source: {platform}{res_str} | 📦 {filesize_mb:.1f} MB{dur_str}",
+                                caption=f"🎬 {title[:100]}\n📁 {platform}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}",
                                 supports_streaming=True,
                                 reply_markup=post_keyboard,
                                 read_timeout=300,
@@ -515,7 +508,7 @@ async def execute_download(
             logger.error(f"Download error: {e}")
             error_text = (
                 f"❌ <b>Download Failed:</b>\n{html.escape(str(e))}\n\n"
-                f"💬 <i>If this error continues, please contact admin <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
+                f"💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
             )
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -529,7 +522,7 @@ async def execute_download(
                 chat_id=chat_id,
                 text=(
                     f"❌ <b>Error uploading media:</b> {html.escape(str(e))}\n\n"
-                    f"💬 <i>Contact admin <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for support.</i>"
+                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
                 ),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
@@ -556,7 +549,7 @@ async def execute_download(
             if thumb_file and Path(thumb_file).exists():
                 thumb_handle = open(thumb_file, "rb")
 
-            caption = f"🎵 <b>{html.escape(title[:100])}</b> (192kbps | {filesize_mb:.1f} MB)"
+            caption = f"🎵 <b>{html.escape(title[:100])}</b> (192kbps • {filesize_mb:.1f} MB)"
             if bot_handle:
                 caption += f"\n🤖 {html.escape(bot_handle)}"
 
@@ -586,7 +579,7 @@ async def execute_download(
                             title=title,
                             performer=uploader,
                             duration=duration,
-                            caption=f"🎵 {title[:100]} (192kbps | {filesize_mb:.1f} MB)",
+                            caption=f"🎵 {title[:100]} (192kbps • {filesize_mb:.1f} MB)",
                             read_timeout=300,
                             write_timeout=300,
                         )
@@ -610,7 +603,7 @@ async def execute_download(
                 chat_id=chat_id,
                 text=(
                     f"❌ <b>Audio Extraction Failed:</b>\n{html.escape(str(e))}\n\n"
-                    f"💬 <i>Contact admin <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
+                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
                 ),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
@@ -621,7 +614,7 @@ async def execute_download(
                 chat_id=chat_id,
                 text=(
                     f"❌ <b>Error uploading audio:</b> {html.escape(str(e))}\n\n"
-                    f"💬 <i>Contact admin <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
+                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
                 ),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
@@ -755,15 +748,15 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         if is_instant:
             text = (
-                "⚡ <b>Switched to Instant Mode!</b>\n\n"
-                "Videos and photos will now download immediately upon link paste.\n\n"
-                "👉 <i>Send <code>/mode</code> anytime to switch to Quality Picker.</i>"
+                "⚙️ <b>Download Mode: ⚡ Instant Mode</b>\n\n"
+                "✅ <b>Active!</b> Links will now download immediately in highest available quality with zero extra clicks.\n\n"
+                "💡 <i>Tap below or send <code>/mode</code> anytime to switch to Quality Picker.</i>"
             )
         else:
             text = (
-                "🔘 <b>Switched to Quality Picker Mode!</b>\n\n"
-                "The bot will now ask you to choose quality (1080p, 720p, 480p, MP3) before downloading.\n\n"
-                "👉 <i>Send <code>/mode</code> anytime to switch to Instant Mode.</i>"
+                "⚙️ <b>Download Mode: 🔘 Quality Picker</b>\n\n"
+                "✅ <b>Active!</b> When you send a video link, the bot will display buttons to pick 1080p, 720p, 480p, or MP3.\n\n"
+                "💡 <i>Tap below or send <code>/mode</code> anytime to switch to Instant Mode.</i>"
             )
 
         keyboard = [
@@ -790,8 +783,12 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             [InlineKeyboardButton("💬 Message @RahilAnw4r", url=config.ADMIN_LINK)]
         ]
         await query.message.reply_text(
-            f"👑 <b>Bot Owner & Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n\n"
-            f"Feel free to reach out directly for support, bugs, or feature ideas!",
+            f"👑 <b>Admin & Developer Support</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"• <b>Developer:</b> Rahil Anwar\n"
+            f"• <b>Telegram:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n"
+            f"• <b>GitHub:</b> <a href=\"https://github.com/rahilanw4r\">github.com/rahilanw4r</a>\n\n"
+            "💬 <i>Have questions, suggestions, or found a broken link? Click below to chat directly!</i>",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
