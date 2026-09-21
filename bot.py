@@ -139,21 +139,30 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     current_mode = config.get_user_mode(user.id)
     mode_text = "⚡ Instant Auto-Download" if current_mode == "instant" else "🔘 Quality Selector (1080p/720p/480p)"
 
+    bot_username = context.bot.username if (context.bot and context.bot.username) else ""
+    add_group_url = f"https://t.me/{bot_username}?startgroup=true" if bot_username else None
+
     welcome_text = (
         f"👋 <b>Hello, {html.escape(user.first_name)}!</b>\n\n"
         f"Welcome to <b>Universal Media Downloader</b> 📥\n"
         f"Download videos, photos, carousels & music from <b>Instagram, YouTube, TikTok, X (Twitter), Pinterest, Reddit</b> & 1,000+ sites.\n\n"
-        f"⚙️ <b>Current Mode:</b> <code>{mode_text}</code>\n\n"
+        f"⚙️ <b>Active Mode:</b> <code>{mode_text}</code>\n\n"
+        f"👥 <b>Works in Group Chats!</b>\n"
+        f"Add me to any group chat and I'll automatically download and send every media link shared by members!\n\n"
         f"📌 <b>Quick Commands:</b>\n"
         f"• <b>Paste any link</b> — Auto-download media\n"
         f"• <code>/mode</code> — Toggle Instant vs Quality Picker\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
-        f"• <code>/help</code> — Full guide & group chat instructions\n"
+        f"• <code>/help</code> — Full guide & instructions\n"
         f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
         f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
-    keyboard = [
+    keyboard = []
+    if add_group_url:
+        keyboard.append([InlineKeyboardButton("➕ Add Me to Your Group", url=add_group_url)])
+
+    keyboard.extend([
         [
             InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
             InlineKeyboardButton("💬 Contact Admin", callback_data="open_admin"),
@@ -161,7 +170,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         [
             InlineKeyboardButton("📖 User Guide & Help", callback_data="open_help"),
         ],
-    ]
+    ])
 
     await update.message.reply_text(
         welcome_text,
