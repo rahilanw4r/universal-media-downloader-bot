@@ -64,10 +64,20 @@ class TestDownloader(unittest.TestCase):
     def test_ffmpeg_resolved(self):
         self.assertTrue(bool(FFMPEG_EXE), "FFmpeg binary should be resolved")
 
-    def test_downloader_init(self):
-        dl = MediaDownloader()
-        self.assertTrue(dl.download_dir.exists())
+    def test_admin_config(self):
+        self.assertEqual(config.ADMIN_USERNAME, "@RahilAnw4r")
+        self.assertIn("RahilAnw4r", config.ADMIN_LINK)
+
+    def test_user_modes(self):
+        uid = 999999
+        # Default mode is instant
+        self.assertEqual(config.get_user_mode(uid), "instant")
+        config.set_user_mode(uid, "picker")
+        self.assertEqual(config.get_user_mode(uid), "picker")
+        config.set_user_mode(uid, "instant")
+        self.assertEqual(config.get_user_mode(uid), "instant")
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,5 +1,7 @@
 import os
+import json
 from pathlib import Path
+from typing import Dict, Any
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -8,6 +10,10 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+# Admin contact information
+ADMIN_USERNAME = "@RahilAnw4r"
+ADMIN_LINK = "https://t.me/RahilAnw4r"
 
 # Optional: Restrict bot access to specific Telegram user IDs
 _allowed_raw = os.getenv("ALLOWED_TELEGRAM_USER_IDS", "").strip()
@@ -24,9 +30,53 @@ elif (BASE_DIR / "cookies.txt").exists():
 else:
     COOKIES_FILE = None
 
+# User download preferences (persistent to user_preferences.json)
+_PREFS_FILE = BASE_DIR / "user_preferences.json"
+_user_prefs: Dict[str, Any] = {}
+
+
+def _load_prefs():
+    global _user_prefs
+    if _PREFS_FILE.exists():
+        try:
+            with open(_PREFS_FILE, "r", encoding="utf-8") as f:
+                _user_prefs = json.load(f)
+        except Exception:
+            _user_prefs = {}
+
+
+def _save_prefs():
+    try:
+        with open(_PREFS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_user_prefs, f, indent=2)
+    except Exception:
+        pass
+
+
+_load_prefs()
+
 
 def is_user_allowed(user_id: int) -> bool:
     """Check if the user is authorized to use the bot."""
     if not ALLOWED_TELEGRAM_USER_IDS:
         return True  # Allow all users if whitelist is not set
     return user_id in ALLOWED_TELEGRAM_USER_IDS
+
+
+def get_user_mode(user_id: int) -> str:
+    """
+    Get user's download mode:
+    'instant' -> Immediately downloads highest quality video (fastest, 0 clicks).
+    'picker'  -> Shows interactive quality buttons (1080p, 720p, 480p, MP3).
+    """
+    return _user_prefs.get(str(user_id), {}).get("mode", "instant")
+
+
+def set_user_mode(user_id: int, mode: str) -> None:
+    """Set user's download mode ('instant' or 'picker')."""
+    uid_str = str(user_id)
+    if uid_str not in _user_prefs:
+        _user_prefs[uid_str] = {}
+    _user_prefs[uid_str]["mode"] = mode
+    _save_prefs()
+

@@ -312,18 +312,104 @@ class MediaDownloader:
 
         return None
 
+    async def extract_media_options(self, url: str) -> Dict[str, Any]:
+        """
+        Extract available resolutions and metadata for interactive quality buttons.
+        Returns title, uploader, thumbnail, duration, and list of available qualities.
+        """
+        def _probe():
+            opts = self._get_ydl_base_opts()
+            opts.update({
+                "skip_download": True,
+            })
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        try:
+            info = await asyncio.to_thread(_probe)
+        except Exception as e:
+            logger.info("Probe info failed, fallback to generic best: %s", e)
+            info = {}
+
+        title = (info or {}).get("title") or "Media"
+        uploader = (info or {}).get("uploader") or (info or {}).get("channel") or detect_platform(url)
+        thumbnail = (info or {}).get("thumbnail")
+        duration = (info or {}).get("duration", 0)
+
+        formats = (info or {}).get("formats", [])
+        available_heights = set()
+        height_to_filesize = {}
+
+        for f in formats:
+            h = f.get("height")
+            if h and f.get("vcodec") != "none":
+                available_heights.add(h)
+                fs = f.get("filesize") or f.get("filesize_approx")
+                if fs and (h not in height_to_filesize or fs > height_to_filesize[h]):
+                    height_to_filesize[h] = fs
+
+        tiers = [
+            (1080, "🎬 1080p FHD"),
+            (720, "🎬 720p HD"),
+            (480, "🎬 480p SD"),
+            (360, "🎬 360p Low"),
+        ]
+
+        qualities: List[Dict[str, Any]] = []
+        for height, label in tiers:
+            if any(h >= height for h in available_heights):
+                size_str = ""
+                matching = [s for h, s in height_to_filesize.items() if h <= height]
+                if matching:
+                    mb = max(matching) / (1024 * 1024)
+                    if mb <= 49.5:
+                        size_str = f" (~{mb:.1f}MB)"
+                    else:
+                        continue  # Exceeds Telegram 50MB limit
+                qualities.append({
+                    "height": height,
+                    "label": f"{label}{size_str}",
+                    "code": f"res_{height}",
+                })
+
+        if not qualities:
+            qualities.append({
+                "height": 0,
+                "label": "🎬 Best Available",
+                "code": "res_best",
+            })
+
+        return {
+            "title": title,
+            "uploader": uploader,
+            "thumbnail": thumbnail,
+            "duration": duration,
+            "qualities": qualities,
+        }
+
     def _download_ytdlp(
         self,
         url: str,
         temp_dir: Path,
+        resolution: Optional[int] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        """Download media using yt-dlp with best video and audio streams."""
+        """Download media using yt-dlp with optional resolution tier."""
         ydl_opts = self._get_ydl_base_opts()
+
+        if resolution and resolution > 0:
+            format_spec = (
+                f"bestvideo[height<={resolution}][filesize<=48M]+bestaudio/"
+                f"best[height<={resolution}][filesize<=48M]/"
+                f"best[height<={resolution}]/best"
+            )
+        else:
+            format_spec = "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/best[height<=1080]/best"
+
         ydl_opts.update({
             "paths": {"home": temp_dir.as_posix()},
             "outtmpl": {"default": "%(id).30s.%(ext)s"},
-            "format": "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/best[height<=1080]/best",
+            "format": format_spec,
         })
 
         if progress_callback:
@@ -399,6 +485,7 @@ class MediaDownloader:
     async def download_media(
         self,
         url: str,
+        resolution: Optional[int] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """
@@ -426,7 +513,7 @@ class MediaDownloader:
 
             # 3. Standard yt-dlp download
             try:
-                return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, progress_callback)
+                return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, resolution, progress_callback)
             except Exception as e:
                 # 4. Fallback to gallery-dl for posts without video streams
                 logger.info(f"Trying gallery-dl fallback for {url} due to: {e}")

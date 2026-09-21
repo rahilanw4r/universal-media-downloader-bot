@@ -111,10 +111,23 @@ docker compose logs -f
 
 | Command | Description |
 |---|---|
-| `/start` | Welcome message, features overview, and active status |
-| `/quality` | Switch between *Ask Quality* and *Fast Instant Download* |
-| `/settings` | Open preferences and configuration menu |
-| `/help` | Complete instructions and supported platforms guide |
+| `/start` | Welcome greeting, supported platforms, and quick settings |
+| `/settings` | Toggle between *⚡ Instant Mode* and *🔘 Quality Picker* |
+| `/mode` / `/quality` | Quick switch your download quality mode |
+| `/mp3 <url>` | Directly extract 192k MP3 audio with cover art |
+| `/admin` | Contact the bot developer & admin directly |
+| `/about` | Technical specs, engine versions, and architecture |
+| `/help` | Complete user manual and instructions |
+
+---
+
+## 👑 Author & Admin Contact
+
+- **Admin / Developer:** Rahil Anwar ([@RahilAnw4r](https://t.me/RahilAnw4r))
+- **Telegram Support:** [t.me/RahilAnw4r](https://t.me/RahilAnw4r)
+- **GitHub:** [@rahilanw4r](https://github.com/rahilanw4r)
+
+Feel free to reach out for feature requests, issues, or feedback!
 
 ---
 
