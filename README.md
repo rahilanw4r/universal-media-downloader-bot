@@ -45,6 +45,10 @@
   ⏱️ ETA: 1s
   ```
 - **🎵 Studio MP3 Extraction:** Converts any video into a 192k MP3 audio file with the **official video thumbnail embedded as Album Cover Art** for Telegram's built-in music player.
+- **📈 Built-in User Analytics & Admin Dashboard:** Real-time user tracking and download statistics:
+  - Run `/stats` (or `/analytics`) to view total registered users, 24h & 7d active users, total downloads, breakdown by platform (Instagram, YouTube, etc.), and media types.
+  - Interactive "🔄 Refresh Stats" button.
+  - Broadcast announcements directly to all registered users via `/broadcast <message>`.
 - **👥 Group Chat Ready:** Add the bot to any Telegram group chat with the 1-tap `[➕ Add Me to Your Group]` button in `/start`!
 - **🛡️ Cross-Platform Filename Sanitization:** Built-in sanitization avoids Windows/Linux filesystem path issues (`[Errno 22]`) on unusual characters and emojis.
 

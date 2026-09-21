@@ -12,6 +12,14 @@ from downloader import (
     IMAGE_EXTS,
 )
 import config
+import analytics
+
+
+class DummyTelegramUser:
+    def __init__(self, id: int, username: str = "", first_name: str = ""):
+        self.id = id
+        self.username = username
+        self.first_name = first_name
 
 
 class TestDownloader(unittest.TestCase):
@@ -76,6 +84,33 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(config.get_user_mode(uid), "picker")
         config.set_user_mode(uid, "instant")
         self.assertEqual(config.get_user_mode(uid), "instant")
+
+    def test_admin_check(self):
+        admin_user = DummyTelegramUser(id=12345, username="RahilAnw4r")
+        self.assertTrue(config.is_admin(admin_user))
+
+        normal_user = DummyTelegramUser(id=67890, username="regular_joe")
+        self.assertFalse(config.is_admin(normal_user))
+
+    def test_analytics(self):
+        test_uid = 777888999
+        analytics.track_user(test_uid, "tester_bot", "Tester")
+        self.assertIn(test_uid, analytics.get_all_user_ids())
+
+        analytics.track_download(test_uid, "YouTube", "video")
+        analytics.track_download(test_uid, "Instagram", "photo")
+
+        summary = analytics.get_analytics_summary()
+        self.assertGreaterEqual(summary["total_users"], 1)
+        self.assertGreaterEqual(summary["total_downloads"], 2)
+
+        # Check dashboard generators return non-empty strings
+        admin_dash = analytics.format_admin_dashboard()
+        self.assertIn("Bot Analytics", admin_dash)
+        self.assertIn("YouTube", admin_dash)
+
+        pub_dash = analytics.format_public_dashboard()
+        self.assertIn("Universal Media Downloader", pub_dash)
 
 
 if __name__ == "__main__":

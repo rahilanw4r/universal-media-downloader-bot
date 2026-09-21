@@ -14,6 +14,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 # Admin contact information
 ADMIN_USERNAME = "@RahilAnw4r"
 ADMIN_LINK = "https://t.me/RahilAnw4r"
+ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
 
 # Optional: Restrict bot access to specific Telegram user IDs
 _allowed_raw = os.getenv("ALLOWED_TELEGRAM_USER_IDS", "").strip()
@@ -61,6 +62,22 @@ def is_user_allowed(user_id: int) -> bool:
     if not ALLOWED_TELEGRAM_USER_IDS:
         return True  # Allow all users if whitelist is not set
     return user_id in ALLOWED_TELEGRAM_USER_IDS
+
+
+def is_admin(user) -> bool:
+    """Check if a Telegram user has admin privileges."""
+    if not user:
+        return False
+    # Check username
+    if getattr(user, "username", None) and user.username.lower().replace("@", "") == "rahilanw4r":
+        return True
+    # Check admin ID from env
+    if ADMIN_ID and str(user.id) == ADMIN_ID:
+        return True
+    # If whitelist is configured, users in it have admin command access
+    if ALLOWED_TELEGRAM_USER_IDS and user.id in ALLOWED_TELEGRAM_USER_IDS:
+        return True
+    return False
 
 
 def get_user_mode(user_id: int) -> str:

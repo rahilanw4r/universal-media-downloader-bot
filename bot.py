@@ -35,6 +35,7 @@ if sys.platform == "win32":
         pass
 
 import config
+import analytics
 from downloader import (
     MediaDownloader,
     find_urls,
@@ -114,10 +115,14 @@ class ProgressTracker:
 
 
 async def check_user_auth(update: Update) -> bool:
-    """Validate if user is authorized to use the bot."""
+    """Validate if user is authorized to use the bot and track interaction."""
     user = update.effective_user
     if not user:
         return False
+
+    # Automatically track user in persistent analytics
+    analytics.track_user(user.id, user.username, user.first_name)
+
     if not config.is_user_allowed(user.id):
         if update.message:
             await update.message.reply_text(
@@ -153,6 +158,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <b>Paste any link</b> — Auto-download media\n"
         f"• <code>/mode</code> — Toggle Instant vs Quality Picker\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
+        f"• <code>/stats</code> — View user analytics & download count\n"
         f"• <code>/help</code> — Full guide & instructions\n"
         f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
         f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
@@ -203,6 +209,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/start</code> — Greeting, status & quick buttons\n"
         "• <code>/mode</code> — Switch Instant vs Quality Picker\n"
         "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
+        "• <code>/stats</code> — User count & download analytics\n"
         "• <code>/admin</code> — Contact developer directly\n"
         "• <code>/about</code> — Bot technical specifications\n"
         "• <code>/help</code> — Show this manual\n\n"
@@ -333,6 +340,100 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stats and /analytics commands."""
+    if not await check_user_auth(update):
+        return
+
+    user = update.effective_user
+    if config.is_admin(user):
+        text = analytics.format_admin_dashboard()
+        keyboard = [
+            [
+                InlineKeyboardButton("🔄 Refresh Stats", callback_data="refresh_stats"),
+                InlineKeyboardButton("⚡ Mode", callback_data="toggle_mode"),
+            ]
+        ]
+    else:
+        text = analytics.format_public_dashboard()
+        keyboard = [
+            [
+                InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
+                InlineKeyboardButton("💬 Contact Admin", url=config.ADMIN_LINK),
+            ]
+        ]
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /broadcast <message> - Admin only announcement to all bot users."""
+    if not await check_user_auth(update):
+        return
+
+    user = update.effective_user
+    if not config.is_admin(user):
+        await update.message.reply_text(
+            "⛔ <b>Access Denied:</b> This command is restricted to the bot admin.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "📢 <b>Broadcast Command Usage:</b>\n\n"
+            "Send <code>/broadcast &lt;your message&gt;</code> to send an announcement to all registered users.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    broadcast_text = " ".join(context.args)
+    user_ids = analytics.get_all_user_ids()
+
+    if not user_ids:
+        await update.message.reply_text("⚠️ <i>No registered users found to broadcast to.</i>", parse_mode=ParseMode.HTML)
+        return
+
+    status_msg = await update.message.reply_text(
+        f"⏳ <b>Broadcasting to {len(user_ids)} users...</b>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    sent = 0
+    failed = 0
+    formatted_msg = (
+        f"📢 <b>Announcement from Admin</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{html.escape(broadcast_text)}\n\n"
+        f"💬 <i>Universal Media Downloader Updates</i>"
+    )
+
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text=formatted_msg,
+                parse_mode=ParseMode.HTML,
+            )
+            sent += 1
+            await asyncio.sleep(0.05)  # Telegram rate limit friendly
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast Completed!</b>\n\n"
+        f"• 👥 <b>Total Targets:</b> {len(user_ids)}\n"
+        f"• 📬 <b>Delivered:</b> {sent}\n"
+        f"• ⚠️ <b>Failed / Blocked:</b> {failed}",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def execute_download(
     chat_id: int,
     status_msg,
@@ -405,6 +506,7 @@ async def execute_download(
                             )
                         else:
                             raise
+                analytics.track_download(chat_id, platform, "photo")
 
             # 2. Multi-item album / carousel delivery
             elif media_type == "album":
@@ -452,6 +554,7 @@ async def execute_download(
                             )
                         else:
                             raise
+                    analytics.track_download(chat_id, platform, "album")
                 finally:
                     for fh in open_files:
                         fh.close()
@@ -504,6 +607,7 @@ async def execute_download(
                             )
                         else:
                             raise
+                analytics.track_download(chat_id, platform, "video")
 
             # Cleanup temp files
             if dir_path:
@@ -597,6 +701,8 @@ async def execute_download(
             finally:
                 if thumb_handle:
                     thumb_handle.close()
+
+            analytics.track_download(chat_id, platform, "audio")
 
             # Cleanup temp files
             if dir_path:
@@ -809,7 +915,38 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await help_command(update, context)
         return
 
-    # 4. Download Buttons: format -> dl:<action>:<session_id>
+    # 4. Refresh Analytics Dashboard
+    if data == "refresh_stats":
+        user = update.effective_user
+        if config.is_admin(user):
+            text = analytics.format_admin_dashboard()
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔄 Refresh Stats", callback_data="refresh_stats"),
+                    InlineKeyboardButton("⚡ Mode", callback_data="toggle_mode"),
+                ]
+            ]
+        else:
+            text = analytics.format_public_dashboard()
+            keyboard = [
+                [
+                    InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
+                    InlineKeyboardButton("💬 Contact Admin", url=config.ADMIN_LINK),
+                ]
+            ]
+
+        try:
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            pass
+        return
+
+    # 5. Download Buttons: format -> dl:<action>:<session_id>
     parts = data.split(":")
     if len(parts) < 3 or parts[0] != "dl":
         return
@@ -970,6 +1107,9 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("contact", admin_command))
     app.add_handler(CommandHandler("about", about_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("analytics", stats_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
 
