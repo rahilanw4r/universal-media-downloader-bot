@@ -106,7 +106,7 @@ class MediaDownloader:
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_ydl_base_opts(self) -> Dict[str, Any]:
-        """Base options for yt-dlp."""
+        """Base options for yt-dlp with anti-bot bypass configuration."""
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -118,6 +118,13 @@ class MediaDownloader:
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
             ),
+            # Bypass YouTube "Sign in to confirm you're not a bot" on datacenter/cloud IPs
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios", "tv", "web"],
+                    "player_skip": ["webpage", "configs"],
+                }
+            },
         }
         if getattr(config, "COOKIES_FILE", None):
             opts["cookiefile"] = str(config.COOKIES_FILE)
