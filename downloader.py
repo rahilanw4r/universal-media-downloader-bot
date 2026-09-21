@@ -6,7 +6,6 @@ import shutil
 import tempfile
 import logging
 import subprocess
-import urllib.request
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 from PIL import Image
@@ -97,7 +96,7 @@ class DownloaderError(Exception):
 
 
 class MediaDownloader:
-    """High-performance async media downloader supporting videos, photos, and carousels."""
+    """High-performance async media downloader supporting videos, photos, carousels, and audio."""
 
     def __init__(self, download_dir: Optional[Path] = None):
         if download_dir is None:
@@ -124,159 +123,6 @@ class MediaDownloader:
             opts["cookiefile"] = str(config.COOKIES_FILE)
         return opts
 
-    async def get_media_info(self, url: str) -> Dict[str, Any]:
-        """Extract metadata without downloading."""
-        opts = self._get_ydl_base_opts()
-
-        def _extract():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=False)
-
-        try:
-            info = await asyncio.to_thread(_extract)
-            return info or {}
-        except Exception as e:
-            logger.warning(f"Error extracting media info with yt-dlp: {e}")
-            raise DownloaderError(f"Could not extract info: {e}")
-
-    async def extract_media_options(self, url: str) -> Dict[str, Any]:
-        """
-        Extract available resolutions and formats for UI buttons.
-        Returns title, uploader, thumbnail, and list of available qualities.
-        """
-        # 1. Specialized Pinterest inspection
-        if is_pinterest_url(url) and Pinterest:
-            try:
-                def _get_pin():
-                    p = Pinterest()
-                    return p.get_pin(url)
-                pin_res = await asyncio.to_thread(_get_pin)
-                if pin_res.get("ok"):
-                    pin = pin_res.get("pin", {})
-                    media = pin_res.get("media", {})
-                    media_type = media.get("type", "image")
-                    title = pin.get("title") or pin.get("description") or "Pinterest Pin"
-                    uploader = pin_res.get("author", {}).get("username") or "Pinterest"
-                    thumbnail = media.get("url") or media.get("poster")
-                    if media_type == "video":
-                        qualities = [{"height": 0, "label": "🎬 Download Video (MP4)", "code": "best"}]
-                    else:
-                        qualities = [{"height": 0, "label": "🖼️ Download Original Photo (HD)", "code": "post"}]
-                    return {
-                        "title": title[:60],
-                        "uploader": uploader,
-                        "thumbnail": thumbnail,
-                        "duration": 0,
-                        "qualities": qualities,
-                        "is_post": (media_type != "video"),
-                    }
-            except Exception as e:
-                logger.warning(f"Pinterest info error: {e}")
-
-        # 2. Specialized Twitter / X inspection
-        if is_twitter_url(url):
-            m = re.search(r"status/(\d+)", url)
-            if m:
-                tid = m.group(1)
-                try:
-                    def _get_tweet():
-                        return requests.get(f"https://api.fxtwitter.com/i/status/{tid}", timeout=5)
-                    resp = await asyncio.to_thread(_get_tweet)
-                    if resp.status_code == 200:
-                        tw = resp.json().get("tweet", {})
-                        media = tw.get("media", {})
-                        photos = media.get("photos") or [item for item in media.get("all", []) if item.get("type") == "photo"]
-                        videos = media.get("videos") or [item for item in media.get("all", []) if item.get("type") == "video"]
-                        if photos and not videos:
-                            qty = f" ({len(photos)} images)" if len(photos) > 1 else ""
-                            return {
-                                "title": (tw.get("text") or "X / Twitter Post")[:60],
-                                "uploader": tw.get("author", {}).get("name") or "X (Twitter)",
-                                "thumbnail": photos[0].get("url"),
-                                "duration": 0,
-                                "qualities": [{"height": 0, "label": f"🖼️ Download Photo{qty}", "code": "post"}],
-                                "is_post": True,
-                            }
-                except Exception as e:
-                    logger.warning(f"Twitter info error: {e}")
-
-        # 3. Generic / yt-dlp inspection
-        try:
-            info = await self.get_media_info(url)
-        except DownloaderError:
-            # If yt-dlp cannot parse formats (e.g. image post), provide direct post download button
-            return {
-                "title": "Social Media Post",
-                "uploader": detect_platform(url),
-                "thumbnail": None,
-                "duration": 0,
-                "qualities": [{"height": 0, "label": "🖼️ Download Post / Media", "code": "post"}],
-                "is_post": True,
-            }
-
-        title = info.get("title", "Video")
-        uploader = info.get("uploader") or info.get("channel", "Unknown")
-        thumbnail = info.get("thumbnail")
-        duration = info.get("duration", 0)
-
-        formats = info.get("formats", [])
-        qualities: List[Dict[str, Any]] = []
-
-        # Find available heights
-        available_heights = set()
-        height_to_filesize = {}
-
-        for f in formats:
-            h = f.get("height")
-            if h and f.get("vcodec") != "none":
-                available_heights.add(h)
-                fs = f.get("filesize") or f.get("filesize_approx")
-                if fs and (h not in height_to_filesize or fs > height_to_filesize[h]):
-                    height_to_filesize[h] = fs
-
-        # Standard resolution tiers to offer
-        tiers = [
-            (1080, "1080p FHD"),
-            (720, "720p HD"),
-            (480, "480p SD"),
-            (360, "360p Data Saver"),
-        ]
-
-        for height, label in tiers:
-            if any(h >= height for h in available_heights) or not available_heights:
-                size_str = ""
-                matching_sizes = [
-                    size for h, size in height_to_filesize.items() if h <= height
-                ]
-                if matching_sizes:
-                    mb = max(matching_sizes) / (1024 * 1024)
-                    if mb <= 49.0:
-                        size_str = f" (~{mb:.1f} MB)"
-                    else:
-                        continue
-
-                qualities.append({
-                    "height": height,
-                    "label": f"{label}{size_str}",
-                    "code": f"res_{height}",
-                })
-
-        if not qualities:
-            qualities.append({
-                "height": 0,
-                "label": "🎬 Best Quality (MP4)",
-                "code": "best",
-            })
-
-        return {
-            "title": title,
-            "uploader": uploader,
-            "thumbnail": thumbnail,
-            "duration": duration,
-            "qualities": qualities,
-            "is_post": False,
-        }
-
     def _download_pinterest(self, url: str, temp_dir: Path) -> Dict[str, Any]:
         """Download Pinterest image or video pin using pinterest-downloader."""
         if not Pinterest:
@@ -298,7 +144,7 @@ class MediaDownloader:
 
         filesize_mb = downloaded_path.stat().st_size / (1024 * 1024)
         if filesize_mb > 50:
-            raise DownloaderError(f"File is too large for Telegram ({filesize_mb:.1f} MB > 50 MB).")
+            raise DownloaderError(f"File is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit).")
 
         out_type = "video" if media_type == "video" or downloaded_path.suffix.lower() in VIDEO_EXTS else "photo"
 
@@ -415,7 +261,7 @@ class MediaDownloader:
                 url,
             ]
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-            
+
             all_files = [f for f in temp_dir.rglob("*") if f.is_file()]
             vids = [f for f in all_files if f.suffix.lower() in VIDEO_EXTS]
             imgs = [f for f in all_files if f.suffix.lower() in IMAGE_EXTS]
@@ -466,33 +312,18 @@ class MediaDownloader:
 
         return None
 
-    async def download_video(
+    def _download_ytdlp(
         self,
         url: str,
-        resolution: Optional[int] = None,
+        temp_dir: Path,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
-        """
-        Download video with optional resolution and real-time progress updates.
-        Also resiliently handles image/photo posts if yt-dlp retrieves images.
-        """
-        temp_dir = Path(tempfile.mkdtemp(dir=str(self.download_dir)))
-
+        """Download media using yt-dlp with best video and audio streams."""
         ydl_opts = self._get_ydl_base_opts()
-
-        if resolution and resolution > 0:
-            format_spec = (
-                f"bestvideo[height<={resolution}][filesize<=48M]+bestaudio/"
-                f"best[height<={resolution}][filesize<=48M]/"
-                f"best[height<={resolution}]/best"
-            )
-        else:
-            format_spec = "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/best[height<=1080]/best"
-
         ydl_opts.update({
             "paths": {"home": temp_dir.as_posix()},
             "outtmpl": {"default": "%(id).30s.%(ext)s"},
-            "format": format_spec,
+            "format": "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/best[height<=1080]/best",
         })
 
         if progress_callback:
@@ -513,20 +344,11 @@ class MediaDownloader:
 
             ydl_opts["progress_hooks"] = [_hook]
 
-        def _download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=True)
-
-        try:
-            info = await asyncio.to_thread(_download)
-        except Exception as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            logger.warning(f"yt-dlp download failed: {e}")
-            raise DownloaderError(f"Download failed: {e}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
 
         files = [f for f in temp_dir.glob("*") if f.is_file()]
         if not files:
-            shutil.rmtree(temp_dir, ignore_errors=True)
             raise DownloaderError("No file was saved during download.")
 
         video_files = [f for f in files if f.suffix.lower() in VIDEO_EXTS]
@@ -553,7 +375,6 @@ class MediaDownloader:
         filesize_mb = filesize / (1024 * 1024)
 
         if filesize_mb > 50:
-            shutil.rmtree(temp_dir, ignore_errors=True)
             raise DownloaderError(
                 f"Media is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit)."
             )
@@ -578,44 +399,45 @@ class MediaDownloader:
     async def download_media(
         self,
         url: str,
-        resolution: Optional[int] = None,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """
-        Universal media downloader for videos, photos, and carousels.
-        Selects the optimal engine (Pinterest, Twitter, yt-dlp, or gallery-dl).
+        Main media downloader entrypoint.
+        Routes to Pinterest, Twitter, yt-dlp, or gallery-dl.
         """
         temp_dir = Path(tempfile.mkdtemp(dir=str(self.download_dir)))
 
-        # 1. Specialized Pinterest Downloader
-        if is_pinterest_url(url) and Pinterest:
-            try:
-                res = await asyncio.to_thread(self._download_pinterest, url, temp_dir)
-                return res
-            except Exception as e:
-                logger.warning(f"Pinterest engine failed, trying fallback: {e}")
-
-        # 2. Specialized Twitter / X Downloader
-        if is_twitter_url(url):
-            try:
-                tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)
-                if tw_res:
-                    return tw_res
-            except Exception as e:
-                logger.warning(f"Twitter engine failed, trying fallback: {e}")
-
-        # 3. Standard yt-dlp download
         try:
-            res = await self.download_video(url, resolution=resolution, progress_callback=progress_callback)
-            return res
-        except DownloaderError as e:
-            # 4. Fallback to gallery-dl for posts without video streams
-            logger.info(f"Trying gallery-dl fallback for {url} due to: {e}")
-            gdl_res = await asyncio.to_thread(self._download_gallery_dl, url, temp_dir)
-            if gdl_res:
-                return gdl_res
+            # 1. Specialized Pinterest Downloader
+            if is_pinterest_url(url) and Pinterest:
+                try:
+                    return await asyncio.to_thread(self._download_pinterest, url, temp_dir)
+                except Exception as e:
+                    logger.warning(f"Pinterest engine error, trying fallback: {e}")
+
+            # 2. Specialized Twitter / X Downloader
+            if is_twitter_url(url):
+                try:
+                    tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)
+                    if tw_res:
+                        return tw_res
+                except Exception as e:
+                    logger.warning(f"Twitter engine error, trying fallback: {e}")
+
+            # 3. Standard yt-dlp download
+            try:
+                return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, progress_callback)
+            except Exception as e:
+                # 4. Fallback to gallery-dl for posts without video streams
+                logger.info(f"Trying gallery-dl fallback for {url} due to: {e}")
+                gdl_res = await asyncio.to_thread(self._download_gallery_dl, url, temp_dir)
+                if gdl_res:
+                    return gdl_res
+                raise DownloaderError(f"Download failed: {e}")
+
+        except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            raise e
+            raise
 
     async def download_audio(
         self,
@@ -702,9 +524,9 @@ class MediaDownloader:
                     thumb_file = raw_thumb
                 break
 
-        title = info.get("title", "Audio")
-        uploader = info.get("uploader") or info.get("channel", "Unknown")
-        duration = info.get("duration", 0)
+        title = (info or {}).get("title", "Audio")
+        uploader = (info or {}).get("uploader") or (info or {}).get("channel", "Unknown")
+        duration = (info or {}).get("duration", 0)
 
         return {
             "type": "audio",

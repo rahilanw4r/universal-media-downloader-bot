@@ -57,13 +57,9 @@ class TestDownloader(unittest.TestCase):
         bar_100 = render_progress_bar(100, width=10)
         self.assertEqual(bar_100, "[██████████] 100%")
 
-    def test_user_settings(self):
-        test_uid = 12345678
-        config.set_user_setting(test_uid, "mode", "instant")
-        self.assertEqual(config.get_user_setting(test_uid, "mode"), "instant")
-
-        config.set_user_setting(test_uid, "mode", "interactive")
-        self.assertEqual(config.get_user_setting(test_uid, "mode"), "interactive")
+    def test_user_auth(self):
+        # By default when whitelist is empty, any user is allowed
+        self.assertTrue(config.is_user_allowed(12345678))
 
     def test_ffmpeg_resolved(self):
         self.assertTrue(bool(FFMPEG_EXE), "FFmpeg binary should be resolved")
