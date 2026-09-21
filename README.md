@@ -9,7 +9,7 @@
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v20%2B-blue?logo=telegram)](https://core.telegram.org/bots/api)
 [![yt-dlp](https://img.shields.io/badge/Powered%20By-yt--dlp-red?logo=youtube)](https://github.com/yt-dlp/yt-dlp)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![CI Tests](https://github.com/rahilanw4r/rahilanw4r-universal-media-downloader-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/rahilanw4r/rahilanw4r-universal-media-downloader-bot/actions)
+[![CI Tests](https://github.com/rahilanw4r/universal-media-downloader-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/rahilanw4r/universal-media-downloader-bot/actions)
 
 [Live Bot Demo](https://t.me/UniversalMediaSaverBot) • [Report Bug](.github/ISSUE_TEMPLATE/bug_report.md) • [Request Feature](.github/ISSUE_TEMPLATE/feature_request.md)
 
@@ -36,7 +36,7 @@
 
 - **🎛️ Dynamic Resolution Picker:** Inspects incoming video streams and provides interactive buttons:
   - `[ 💎 1080p FHD ]` `[ 📺 720p HD ]` `[ 📱 480p SD ]` `[ ⚡ 360p Data Saver ]`
-- **⚡ Instant Zero-Click Mode:** Send `/quality` or `/settings` to enable Instant Mode. Paste any link and receive the video immediately with **zero extra clicks**!
+- **⚡ Instant Zero-Click Mode:** Send `/mode` to enable Instant Mode. Paste any link and receive the video immediately with **zero extra clicks**!
 - **📊 Real-time Animated Progress Bar:** Live updates directly on the Telegram message showing percentage, speed, downloaded size, and ETA:
   ```text
   ⏳ Downloading from YouTube...
@@ -45,7 +45,7 @@
   ⏱️ ETA: 1s
   ```
 - **🎵 Studio MP3 Extraction:** Converts any video into a 192k MP3 audio file with the **official video thumbnail embedded as Album Cover Art** for Telegram's built-in music player.
-- **👥 Group Chat Ready:** Add the bot to any Telegram group chat. It automatically detects shared links and replies with playable videos directly in the group!
+- **👥 Group Chat Ready:** Add the bot to any Telegram group chat with the 1-tap `[➕ Add Me to Your Group]` button in `/start`!
 - **🛡️ Cross-Platform Filename Sanitization:** Built-in sanitization avoids Windows/Linux filesystem path issues (`[Errno 22]`) on unusual characters and emojis.
 
 ---
@@ -54,8 +54,8 @@
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/rahilanw4r/rahilanw4r-universal-media-downloader-bot.git
-cd rahilanw4r-universal-media-downloader-bot
+git clone https://github.com/rahilanw4r/universal-media-downloader-bot.git
+cd universal-media-downloader-bot
 ```
 
 ### 2. Install dependencies
