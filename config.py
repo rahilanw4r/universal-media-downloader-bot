@@ -17,6 +17,15 @@ ALLOWED_TELEGRAM_USER_IDS = [
     int(uid.strip()) for uid in _allowed_raw.split(",") if uid.strip().isdigit()
 ]
 
+# Optional: Path to cookies.txt for platforms requiring login (Instagram, etc.)
+_cookies_env = os.getenv("COOKIES_FILE", "").strip()
+if _cookies_env and Path(_cookies_env).exists():
+    COOKIES_FILE = Path(_cookies_env).resolve()
+elif (BASE_DIR / "cookies.txt").exists():
+    COOKIES_FILE = BASE_DIR / "cookies.txt"
+else:
+    COOKIES_FILE = None
+
 
 def is_user_allowed(user_id: int) -> bool:
     """Check if the user is authorized to use the bot."""

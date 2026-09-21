@@ -5,11 +5,13 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
+    InputMediaVideo,
 )
 from telegram.constants import ChatAction, ChatType, ParseMode
 from telegram.ext import (
@@ -36,6 +38,7 @@ from downloader import (
     detect_platform,
     render_progress_bar,
     DownloaderError,
+    VIDEO_EXTS,
 )
 
 # Configure logging
@@ -134,21 +137,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"I am your *All-in-One Social Media Downloader* 📥\n\n"
         f"🚀 *What you can download:*\n"
-        f"• 📸 *Instagram* (Reels, Posts, Stories)\n"
+        f"• 📸 *Instagram* (Posts, Reels, Carousels, Stories)\n"
         f"• 🎥 *YouTube* (Shorts, HD Videos, MP3 Music)\n"
-        f"• 🐦 *X / Twitter* (Videos & GIFs)\n"
+        f"• 🐦 *X / Twitter* (Photos, Multi-Images, Videos & GIFs)\n"
         f"• 🎵 *TikTok* (Clean, No Watermark)\n"
-        f"• 📌 *Pinterest* (Videos & Clips)\n"
-        f"• 🤖 *Reddit* & *Facebook* Videos\n\n"
-        f"🎬 *How Video Quality Works:*\n"
+        f"• 📌 *Pinterest* (Image Pins & HD Video Pins)\n"
+        f"• 🤖 *Reddit* & *Facebook* Videos & Posts\n\n"
+        f"🎬 *How Media Quality Works:*\n"
         f"Currently set to: `{mode_badge}`\n\n"
-        f"• *By Default:* Whenever you paste a link, I ask which quality you want:\n"
-        f"  `1080p Full HD` • `720p HD` • `480p Data Saver` • `🎵 MP3 Audio`\n\n"
+        f"• *By Default:* Whenever you paste a link, I ask which format you want:\n"
+        f"  `1080p FHD` • `720p HD` • `🖼️ Photo/Post` • `🎵 MP3 Audio`\n\n"
         f"• *Want Faster Downloads?*\n"
         f"  Use `/quality` or `/settings` to turn on *⚡ Fast Instant Mode*.\n"
-        f"  In Fast Mode, you paste a link and get the video immediately with *zero clicks*!\n\n"
+        f"  In Fast Mode, you paste a link and get the media immediately with *zero clicks*!\n\n"
         f"👥 *Works in Group Chats:*\n"
-        f"Add me to any group with friends, and I will automatically download any video link shared in the chat!\n\n"
+        f"Add me to any group with friends, and I will automatically download any video or post link shared in the chat!\n\n"
         f"👇 *Send any link now, or change your settings below:*"
     )
 
@@ -171,17 +174,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await check_user_auth(update):
         return
 
+    bot_tag = f"@{context.bot.username}" if (context.bot and context.bot.username) else "the bot"
     help_text = (
         "📖 *All-in-One Downloader — Quick Guide*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n\n"
         "🎛️ *1. How to Change Video Quality / Mode:*\n"
-        "Send `/quality` or `/settings` to choose how you want videos delivered:\n"
-        "• *Ask Quality Every Time:* Gives you buttons for 1080p, 720p, 480p, or MP3.\n"
+        "Send `/quality` or `/settings` to choose how you want media delivered:\n"
+        "• *Ask Quality Every Time:* Gives you buttons for 1080p, 720p, 480p, Post/Photo, or MP3.\n"
         "• *Fast Instant Download:* Directly downloads the best quality as soon as you drop a link.\n\n"
-        "🎵 *2. Downloading Audio Only (MP3):*\n"
+        "🖼️ *2. Downloading Posts & Photos:*\n"
+        "Drop any Pinterest pin, Twitter/X post, or Instagram link. The bot automatically grabs high-resolution photos and multi-image albums!\n\n"
+        "🎵 *3. Downloading Audio Only (MP3):*\n"
         "When you send a link, tap the *🎵 MP3 Audio* button to get the audio with official album art in Telegram's music player.\n\n"
-        "👥 *3. Using in Group Chats:*\n"
-        "Add @UniversalMediaSaverBot to any Telegram group chat. Whenever someone posts an Instagram Reel or YouTube link, the bot automatically downloads it right inside the group!\n\n"
+        "👥 *4. Using in Group Chats:*\n"
+        f"Add {bot_tag} to any Telegram group chat. Whenever someone posts a link, the bot automatically downloads it right inside the group!\n\n"
         "📌 *Commands:*\n"
         "• `/start` - Welcome message & status\n"
         "• `/quality` - Change quality & instant download mode\n"
@@ -200,9 +206,9 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     current_mode = config.get_user_setting(user_id, "mode", "interactive")
 
     is_instant = (current_mode == "instant")
-    mode_status = "⚡ *Fast Instant Mode* (Sends video with zero clicks)" if is_instant else "🔘 *Ask Quality Mode* (Choose 1080p, 720p, 480p, MP3)"
+    mode_status = "⚡ *Fast Instant Mode* (Sends media with zero clicks)" if is_instant else "🔘 *Interactive Mode* (Choose format/resolution)"
 
-    button_label = "👉 Switch to 🔘 Ask Quality Mode" if is_instant else "👉 Switch to ⚡ Fast Instant Mode"
+    button_label = "👉 Switch to 🔘 Interactive Mode" if is_instant else "👉 Switch to ⚡ Fast Instant Mode"
 
     keyboard = [
         [
@@ -214,12 +220,12 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     ]
 
     text = (
-        f"⚙️ *Video Quality & Download Settings*\n\n"
+        f"⚙️ *Download & Quality Settings*\n\n"
         f"Current Mode: {mode_status}\n\n"
-        f"• *🔘 Ask Quality Every Time:*\n"
-        f"  Shows buttons so you can pick `1080p FHD`, `720p HD`, `480p Data Saver`, or `MP3 Audio`.\n\n"
+        f"• *🔘 Interactive Mode:*\n"
+        f"  Shows buttons so you can pick `1080p FHD`, `720p HD`, `🖼️ Photo/Post`, or `MP3 Audio`.\n\n"
         f"• *⚡ Fast Instant Mode:*\n"
-        f"  Pastes link ➡️ Video delivers immediately with zero extra clicks!\n\n"
+        f"  Pastes link ➡️ Media delivers immediately with zero extra clicks!\n\n"
         f"Tap below to switch:"
     )
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -238,50 +244,137 @@ async def execute_download(
     loop = asyncio.get_running_loop()
     tracker = ProgressTracker(status_msg, loop, platform)
 
-    if action == "video":
+    if action in ("video", "post"):
         await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
 
         try:
-            result = await downloader.download_video(
+            result = await downloader.download_media(
                 url=target_url,
                 resolution=resolution,
                 progress_callback=tracker.on_progress,
             )
-            file_path = result["file_path"]
-            dir_path = result["dir_path"]
-            title = result.get("title", "Video")
+            media_type = result.get("type", "video")
+            dir_path = result.get("dir_path")
+            title = result.get("title", "Media")
             filesize_mb = result.get("filesize_mb", 0)
+            bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else "@videodownloader_allbot"
 
-            try:
-                await status_msg.edit_text(
-                    f"⬆️ *Uploading video ({filesize_mb:.1f} MB) to Telegram...*\nAlmost done!",
-                    parse_mode=ParseMode.MARKDOWN,
+            # 1. Photo delivery
+            if media_type == "photo":
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                file_path = result["file_path"]
+                caption = (
+                    f"🖼️ <b>{html.escape(title[:100])}</b>\n"
+                    f"📁 Source: {html.escape(platform)} ({filesize_mb:.1f} MB)\n"
+                    f"🤖 Downloaded via {html.escape(bot_handle)}"
                 )
-            except Exception:
-                pass
+                with open(file_path, "rb") as f:
+                    try:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=f,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                            read_timeout=300,
+                            write_timeout=300,
+                        )
+                    except Exception as e:
+                        if "parse entities" in str(e).lower():
+                            f.seek(0)
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=f,
+                                caption=f"🖼️ {title[:100]}\n📁 Source: {platform}\n🤖 Downloaded via {bot_handle}",
+                                read_timeout=300,
+                                write_timeout=300,
+                            )
+                        else:
+                            raise
 
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-
-            bot_handle = f"@{context.bot.username}" if context.bot.username else "@UniversalMediaSaverBot"
-            caption = (
-                f"🎬 *{html.escape(title[:100])}*\n"
-                f"📁 Source: {platform} ({filesize_mb:.1f} MB)\n"
-                f"🤖 Downloaded via {bot_handle}"
-            )
-
-            with open(file_path, "rb") as f:
-                await context.bot.send_video(
-                    chat_id=chat_id,
-                    video=f,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN,
-                    supports_streaming=True,
-                    read_timeout=300,
-                    write_timeout=300,
+            # 2. Multi-item album / carousel delivery
+            elif media_type == "album":
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                file_paths: List[Path] = result.get("file_paths", [])
+                caption = (
+                    f"📸 <b>{html.escape(title[:100])}</b>\n"
+                    f"📁 Source: {html.escape(platform)} ({len(file_paths)} items)\n"
+                    f"🤖 Downloaded via {html.escape(bot_handle)}"
                 )
+                media = []
+                open_files = []
+                try:
+                    for idx, fp in enumerate(file_paths[:10]):  # Telegram allows up to 10 in a media group
+                        fh = open(fp, "rb")
+                        open_files.append(fh)
+                        item_caption = caption if idx == 0 else None
+                        if fp.suffix.lower() in VIDEO_EXTS:
+                            media.append(InputMediaVideo(media=fh, caption=item_caption, parse_mode=ParseMode.HTML))
+                        else:
+                            media.append(InputMediaPhoto(media=fh, caption=item_caption, parse_mode=ParseMode.HTML))
+                    try:
+                        await context.bot.send_media_group(
+                            chat_id=chat_id,
+                            media=media,
+                            read_timeout=300,
+                            write_timeout=300,
+                        )
+                    except Exception as e:
+                        if "parse entities" in str(e).lower():
+                            for item in media:
+                                item.parse_mode = None
+                                if item.caption:
+                                    item.caption = f"📸 {title[:100]}\n📁 Source: {platform}\n🤖 Downloaded via {bot_handle}"
+                                if hasattr(item.media, "seek"):
+                                    item.media.seek(0)
+                            await context.bot.send_media_group(
+                                chat_id=chat_id,
+                                media=media,
+                                read_timeout=300,
+                                write_timeout=300,
+                            )
+                        else:
+                            raise
+                finally:
+                    for fh in open_files:
+                        fh.close()
+
+            # 3. Single video delivery
+            else:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                file_path = result["file_path"]
+                caption = (
+                    f"🎬 <b>{html.escape(title[:100])}</b>\n"
+                    f"📁 Source: {html.escape(platform)} ({filesize_mb:.1f} MB)\n"
+                    f"🤖 Downloaded via {html.escape(bot_handle)}"
+                )
+                with open(file_path, "rb") as f:
+                    try:
+                        await context.bot.send_video(
+                            chat_id=chat_id,
+                            video=f,
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
+                            supports_streaming=True,
+                            read_timeout=300,
+                            write_timeout=300,
+                        )
+                    except Exception as e:
+                        if "parse entities" in str(e).lower():
+                            f.seek(0)
+                            await context.bot.send_video(
+                                chat_id=chat_id,
+                                video=f,
+                                caption=f"🎬 {title[:100]}\n📁 Source: {platform}\n🤖 Downloaded via {bot_handle}",
+                                supports_streaming=True,
+                                read_timeout=300,
+                                write_timeout=300,
+                            )
+                        else:
+                            raise
 
             # Cleanup temp files
-            downloader.cleanup(dir_path)
+            if dir_path:
+                downloader.cleanup(dir_path)
             try:
                 await status_msg.delete()
             except Exception:
@@ -291,15 +384,13 @@ async def execute_download(
             logger.error(f"Download error: {e}")
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"❌ *Download Failed:*\n{e}",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ Download Failed:\n{e}",
             )
         except Exception as e:
-            logger.exception("Unexpected error sending video")
+            logger.exception("Unexpected error sending media")
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"❌ *Error uploading video:* {e}",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ Error uploading media: {e}",
             )
 
     elif action == "audio":
@@ -326,12 +417,13 @@ async def execute_download(
             except Exception:
                 pass
 
-            bot_handle = f"@{context.bot.username}" if context.bot.username else "@UniversalMediaSaverBot"
+            bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else "@videodownloader_allbot"
 
             thumb_handle = None
             if thumb_file and Path(thumb_file).exists():
                 thumb_handle = open(thumb_file, "rb")
 
+            caption = f"🎵 <b>{html.escape(title[:100])}</b>\n🤖 {html.escape(bot_handle)}"
             try:
                 with open(file_path, "rb") as f:
                     await context.bot.send_audio(
@@ -341,11 +433,29 @@ async def execute_download(
                         title=title,
                         performer=uploader,
                         duration=duration,
-                        caption=f"🎵 *{html.escape(title[:100])}*\n🤖 {bot_handle}",
-                        parse_mode=ParseMode.MARKDOWN,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
                         read_timeout=300,
                         write_timeout=300,
                     )
+            except Exception as e:
+                if "parse entities" in str(e).lower():
+                    if thumb_handle and hasattr(thumb_handle, "seek"):
+                        thumb_handle.seek(0)
+                    with open(file_path, "rb") as f:
+                        await context.bot.send_audio(
+                            chat_id=chat_id,
+                            audio=f,
+                            thumbnail=thumb_handle,
+                            title=title,
+                            performer=uploader,
+                            duration=duration,
+                            caption=f"🎵 {title[:100]}\n🤖 {bot_handle}",
+                            read_timeout=300,
+                            write_timeout=300,
+                        )
+                else:
+                    raise
             finally:
                 if thumb_handle:
                     thumb_handle.close()
@@ -361,15 +471,13 @@ async def execute_download(
             logger.error(f"Audio download error: {e}")
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"❌ *Audio Extraction Failed:*\n{e}",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ Audio Extraction Failed:\n{e}",
             )
         except Exception as e:
             logger.exception("Unexpected error sending audio")
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"❌ *Error uploading audio:* {e}",
-                parse_mode=ParseMode.MARKDOWN,
+                text=f"❌ Error uploading audio: {e}",
             )
 
 
@@ -384,7 +492,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     urls = find_urls(message.text)
     if not urls:
-        # In private chat, remind user to send link
         if message.chat.type == ChatType.PRIVATE:
             await message.reply_text(
                 "💡 Paste any video or post link (Instagram, YouTube, Twitter/X, TikTok, Pinterest, etc.) to download!"
@@ -399,7 +506,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # 👥 GROUP CHAT LOGIC: Auto-download without prompting buttons for smooth group chat UX
     if chat_type in (ChatType.GROUP, ChatType.SUPERGROUP):
         status_msg = await message.reply_text(
-            f"⏳ Fetching video from *{platform}*...",
+            f"⏳ Fetching media from *{platform}*...",
             parse_mode=ParseMode.MARKDOWN,
         )
         await execute_download(
@@ -407,7 +514,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             status_msg=status_msg,
             target_url=target_url,
             platform=platform,
-            action="video",
+            action="post",
             resolution=None,
             context=context,
         )
@@ -426,13 +533,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             status_msg=status_msg,
             target_url=target_url,
             platform=platform,
-            action="video",
+            action="post",
             resolution=None,
             context=context,
         )
         return
 
-    # 🎛️ INTERACTIVE MODE: Extract resolutions and show options
+    # 🎛️ INTERACTIVE MODE: Extract media options and show interactive buttons
     loading_msg = await message.reply_text("🔍 Analyzing media options...")
 
     try:
@@ -441,7 +548,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.warning(f"Failed to inspect formats, using fallback: {e}")
         media_opts = {
             "title": "Media",
-            "qualities": [{"height": 0, "label": "🎬 Download Video", "code": "best"}],
+            "qualities": [{"height": 0, "label": "🎬 Download Media", "code": "post"}],
         }
 
     session_id = str(uuid.uuid4())[:8]
@@ -449,19 +556,25 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "url": target_url,
         "platform": platform,
         "user_id": user_id,
-        "title": media_opts.get("title", "Video"),
+        "title": media_opts.get("title", "Media"),
     }
 
-    # Build resolution buttons
+    # Build format & quality buttons
     keyboard = []
     qualities = media_opts.get("qualities", [])
 
-    # Group video qualities in rows of 2
     row = []
     for q in qualities:
-        h = q.get("height", 0)
-        label = q.get("label", "Video")
-        cb_data = f"dl:vid_{h}:{session_id}"
+        code = q.get("code", "best")
+        label = q.get("label", "Download")
+        if code == "post":
+            cb_data = f"dl:post:{session_id}"
+        elif code.startswith("res_"):
+            h = q.get("height", 0)
+            cb_data = f"dl:vid_{h}:{session_id}"
+        else:
+            cb_data = f"dl:vid_0:{session_id}"
+
         row.append(InlineKeyboardButton(label, callback_data=cb_data))
         if len(row) == 2:
             keyboard.append(row)
@@ -491,7 +604,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle clicks on resolution, audio, and settings buttons."""
+    """Handle clicks on resolution, audio, post, and settings buttons."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -510,7 +623,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         config.set_user_setting(user_id, "mode", new_mode)
 
         is_instant = (new_mode == "instant")
-        mode_status = "⚡ *Instant Mode* (Fastest, zero clicks)" if is_instant else "🔘 *Interactive Mode* (Quality Picker)"
+        mode_status = "⚡ *Instant Mode* (Fastest, zero clicks)" if is_instant else "🔘 *Interactive Mode* (Format & Quality Picker)"
 
         keyboard = [
             [
@@ -527,8 +640,8 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(
             f"✅ Settings updated!\n\n"
             f"Current Mode: {mode_status}\n\n"
-            f"• *Interactive:* Shows resolution buttons (1080p/720p/480p) or MP3.\n"
-            f"• *Instant:* Immediately downloads and sends the video upon link drop.",
+            f"• *Interactive:* Shows buttons for video resolution, photos/posts, or MP3.\n"
+            f"• *Instant:* Immediately downloads and sends the media upon link drop.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.MARKDOWN,
         )
@@ -537,7 +650,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if data == "open_settings":
         current_mode = config.get_user_setting(user_id, "mode", "interactive")
         is_instant = (current_mode == "instant")
-        mode_status = "⚡ *Instant Mode* (Fastest, zero clicks)" if is_instant else "🔘 *Interactive Mode* (Quality Picker)"
+        mode_status = "⚡ *Instant Mode* (Fastest, zero clicks)" if is_instant else "🔘 *Interactive Mode* (Format & Quality Picker)"
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -552,7 +665,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.message.reply_text(
             f"⚙️ *Download Settings*\n\n"
             f"Current Mode: {mode_status}\n\n"
-            f"• *Interactive:* Asks you to pick video resolution (1080p/720p/480p) or MP3.\n"
+            f"• *Interactive:* Asks you to pick format (Video/Photo/Post/MP3).\n"
             f"• *Instant:* Instantly downloads the best quality as soon as you paste a link.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.MARKDOWN,
@@ -564,14 +677,16 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             "📖 *All-in-One Downloader — User Manual*\n"
             "━━━━━━━━━━━━━━━━━━━━━\n\n"
             "⚡ *1. What is Instant Mode?*\n"
-            "• *Interactive Mode (Default):* Displays buttons for resolutions (1080p, 720p, 480p, 360p) or MP3.\n"
-            "• *Instant Mode:* Skips all menus! Paste a link and your video is downloaded and delivered immediately.\n"
+            "• *Interactive Mode (Default):* Displays buttons for resolutions or photos/posts or MP3.\n"
+            "• *Instant Mode:* Skips all menus! Paste a link and your media is downloaded and delivered immediately.\n"
             "👉 *To toggle:* Send `/settings` anytime!\n\n"
-            "🎵 *2. Studio MP3 with Album Art:*\n"
+            "🖼️ *2. Photos, Pins, and Albums:*\n"
+            "The bot automatically retrieves single photos, multi-image albums (carousels), and Pinterest image pins.\n\n"
+            "🎵 *3. Studio MP3 with Album Art:*\n"
             "Tap the *MP3 Audio* button on any link to get an audio track complete with the official thumbnail cover art in Telegram's player.\n\n"
-            "👥 *3. Using in Group Chats:*\n"
-            "1. Add @UniversalMediaSaverBot to your group.\n"
-            "2. Any group member drops a link ➡️ Bot automatically replies with the video directly in the group!\n\n"
+            "👥 *4. Using in Group Chats:*\n"
+            "1. Add the bot to your group chat.\n"
+            "2. Any group member drops a link ➡️ Bot automatically replies with the video or post directly in the group!\n\n"
             "⚠️ *Telegram Limits:*\n"
             "Files up to *50 MB* are delivered instantly."
         )
@@ -607,7 +722,23 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     platform = session["platform"]
     chat_id = update.effective_chat.id
 
-    if action_tag.startswith("vid_"):
+    if action_tag == "post":
+        await query.edit_message_text(
+            f"⏳ *Downloading post from {platform}...*\nConnecting...",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        url_sessions.pop(session_id, None)
+        await execute_download(
+            chat_id=chat_id,
+            status_msg=query.message,
+            target_url=target_url,
+            platform=platform,
+            action="post",
+            resolution=None,
+            context=context,
+        )
+
+    elif action_tag.startswith("vid_"):
         res_str = action_tag.split("_")[1]
         resolution = int(res_str) if res_str.isdigit() and int(res_str) > 0 else None
         res_label = f"{resolution}p" if resolution else "Best"
@@ -652,7 +783,7 @@ def main():
         print("=" * 60)
         return
 
-    print("🚀 Initializing Universal Media Downloader Bot with 5 Advanced Features...")
+    print("🚀 Initializing Universal Media Downloader Bot with Video & Post Support...")
     app = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
@@ -677,7 +808,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     print("✅ All-in-One Downloader Bot is running!")
-    print("🤖 Polling Telegram... Send any link to @UniversalMediaSaverBot!")
+    print("🤖 Polling Telegram for incoming links and commands...")
     app.run_polling(drop_pending_updates=True)
 
 
