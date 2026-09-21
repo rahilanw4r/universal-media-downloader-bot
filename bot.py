@@ -55,7 +55,6 @@ logger = logging.getLogger(__name__)
 downloader = MediaDownloader()
 
 # Active URL sessions for inline quality buttons and quick actions
-# Format: session_id -> {"url": str, "platform": str, "time": float, "user_id": int}
 url_sessions: Dict[str, Dict[str, Any]] = {}
 
 
@@ -145,8 +144,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"👋 <b>Welcome, {html.escape(user.first_name)}!</b>\n\n"
         f"I am your <b>Universal Media Downloader</b> 📥\n"
         f"Send me any link to download videos, photos, carousels, or audio!\n\n"
-        f"⚙️ <b>Current Mode:</b> <code>{mode_badge}</code>\n"
-        f"<i>(Switch between Instant download or choosing video quality anytime!)</i>\n\n"
+        f"⚙️ <b>Active Mode:</b> <code>{mode_badge}</code>\n"
+        f"<i>(Send <code>/mode</code> to switch between Instant and Quality Picker!)</i>\n\n"
         f"<b>Supported Platforms:</b>\n"
         f"• 📸 Instagram (Reels, Posts, Carousels)\n"
         f"• 🎥 YouTube (Shorts & Full HD Videos)\n"
@@ -158,12 +157,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"<b>How to use:</b>\n"
         f"• Paste any link into the chat to start!\n"
         f"• Send <code>/mp3 &lt;link&gt;</code> to extract MP3 audio.\n"
-        f"• Use <code>/settings</code> to change quality preferences."
+        f"• Send <code>/mode</code> to toggle Instant vs Quality Picker."
     )
 
     keyboard = [
         [
-            InlineKeyboardButton("⚙️ Download Settings", callback_data="open_settings"),
+            InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
             InlineKeyboardButton("💬 Contact Admin", callback_data="open_admin"),
         ],
         [
@@ -190,7 +189,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "⚡ <b>1. Instant Mode vs Quality Picker:</b>\n"
         "• <b>Instant Mode (Default):</b> Paste any link and your video or photo is downloaded and delivered immediately with zero clicks.\n"
         "• <b>Quality Picker Mode:</b> Asks you to select your desired resolution (1080p, 720p, 480p) or MP3 before downloading.\n"
-        "👉 <i>To switch modes anytime, send <code>/settings</code> or <code>/mode</code>!</i>\n\n"
+        "👉 <i>Send <code>/mode</code> anytime to flip between Instant and Quality Picker!</i>\n\n"
         "🎵 <b>2. Studio MP3 with Album Art:</b>\n"
         "• Send <code>/mp3 &lt;url&gt;</code> or <code>/audio &lt;url&gt;</code> to extract crystal-clear 192k audio.\n"
         "• Or tap the <b>Extract MP3</b> button attached under any downloaded video!\n\n"
@@ -201,17 +200,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Send <code>/admin</code> to message the developer directly.\n\n"
         "<b>Available Commands:</b>\n"
         "• /start - Welcome message & status\n"
-        "• /help - Display this manual\n"
-        "• /settings - Toggle Instant vs Quality Picker mode\n"
-        "• /mode - Quick switch download mode\n"
+        "• /mode - Switch between Instant Mode & Quality Picker\n"
         "• /mp3 &lt;url&gt; - Extract MP3 audio track\n"
         "• /admin - Direct contact with @RahilAnw4r\n"
-        "• /about - Bot info & technical specs"
+        "• /about - Bot info & technical specs\n"
+        "• /help - Display this manual"
     )
 
     keyboard = [
         [
-            InlineKeyboardButton("⚙️ Settings", callback_data="open_settings"),
+            InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
             InlineKeyboardButton("💬 Chat with Admin", url=config.ADMIN_LINK),
         ]
     ]
@@ -221,6 +219,57 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
+    )
+
+
+async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /mode command: quickly flip between Instant Mode and Quality Picker."""
+    if not await check_user_auth(update):
+        return
+
+    user_id = update.effective_user.id
+    current_mode = config.get_user_mode(user_id)
+
+    # Allow optional explicit argument: /mode instant or /mode picker
+    args = context.args or []
+    if args:
+        requested = args[0].lower().strip()
+        if requested in ("instant", "fast", "auto"):
+            new_mode = "instant"
+        elif requested in ("picker", "ask", "quality", "interactive"):
+            new_mode = "picker"
+        else:
+            new_mode = "picker" if current_mode == "instant" else "instant"
+    else:
+        new_mode = "picker" if current_mode == "instant" else "instant"
+
+    config.set_user_mode(user_id, new_mode)
+    is_instant = (new_mode == "instant")
+    toggle_label = "Switch to 🔘 Quality Picker" if is_instant else "Switch to ⚡ Instant Mode"
+
+    if is_instant:
+        mode_text = (
+            "⚡ <b>Switched to Instant Mode!</b>\n\n"
+            "Links you send will now download immediately in the best available quality without extra menus.\n\n"
+            "👉 <i>Send <code>/mode</code> anytime to switch back to Quality Picker.</i>"
+        )
+    else:
+        mode_text = (
+            "🔘 <b>Switched to Quality Picker Mode!</b>\n\n"
+            "When you paste a video link, the bot will show interactive buttons so you can pick 1080p, 720p, 480p, or MP3.\n\n"
+            "👉 <i>Send <code>/mode</code> anytime to switch back to Instant Mode.</i>"
+        )
+
+    keyboard = [
+        [
+            InlineKeyboardButton(toggle_label, callback_data="toggle_mode"),
+        ]
+    ]
+
+    await update.message.reply_text(
+        mode_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML,
     )
 
 
@@ -270,7 +319,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     keyboard = [
         [
             InlineKeyboardButton("💬 Contact Admin", url=config.ADMIN_LINK),
-            InlineKeyboardButton("⚙️ Settings", callback_data="open_settings"),
+            InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
         ]
     ]
 
@@ -279,44 +328,6 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
-    )
-
-
-async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /settings, /mode, and /quality commands to switch download behavior."""
-    if not await check_user_auth(update):
-        return
-
-    user_id = update.effective_user.id
-    current_mode = config.get_user_mode(user_id)
-    is_instant = (current_mode == "instant")
-
-    mode_status = "⚡ <b>Instant Mode</b> (Fastest, zero clicks)" if is_instant else "🔘 <b>Quality Picker Mode</b> (Choose 1080p/720p/480p/MP3)"
-    toggle_label = "Switch to 🔘 Quality Picker" if is_instant else "Switch to ⚡ Instant Mode"
-
-    keyboard = [
-        [
-            InlineKeyboardButton(toggle_label, callback_data="toggle_mode"),
-        ],
-        [
-            InlineKeyboardButton("🔙 Close", callback_data="close_settings"),
-        ],
-    ]
-
-    settings_text = (
-        f"⚙️ <b>Download Settings & Mode</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<b>Current Active Mode:</b>\n"
-        f"👉 {mode_status}\n\n"
-        f"<b>How each mode works:</b>\n"
-        f"• <b>⚡ Instant Mode:</b> When you paste a link, the bot immediately begins downloading the best available video quality without asking. Perfect for fast downloads!\n\n"
-        f"• <b>🔘 Quality Picker Mode:</b> The bot first analyzes the link and provides buttons for 1080p, 720p, 480p, or MP3 so you can save mobile data."
-    )
-
-    await update.message.reply_text(
-        settings_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML,
     )
 
 
@@ -457,11 +468,11 @@ async def execute_download(
                 if bot_handle:
                     caption += f"\n🤖 {html.escape(bot_handle)}"
 
-                # Quick action buttons under the delivered video: Extract MP3 or change settings
+                # Quick action buttons under the delivered video: Extract MP3 or toggle mode
                 post_keyboard = InlineKeyboardMarkup([
                     [
                         InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
-                        InlineKeyboardButton("⚙️ Settings", callback_data="open_settings"),
+                        InlineKeyboardButton("⚡ Mode", callback_data="toggle_mode"),
                     ]
                 ])
 
@@ -721,7 +732,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle resolution picker, MP3 extraction, settings toggle, and admin buttons."""
+    """Handle resolution picker, MP3 extraction, mode toggle, and admin buttons."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -740,53 +751,40 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         config.set_user_mode(user_id, new_mode)
 
         is_instant = (new_mode == "instant")
-        mode_status = "⚡ <b>Instant Mode</b> (Fastest, zero clicks)" if is_instant else "🔘 <b>Quality Picker Mode</b> (Choose 1080p/720p/480p/MP3)"
         toggle_label = "Switch to 🔘 Quality Picker" if is_instant else "Switch to ⚡ Instant Mode"
+
+        if is_instant:
+            text = (
+                "⚡ <b>Switched to Instant Mode!</b>\n\n"
+                "Videos and photos will now download immediately upon link paste.\n\n"
+                "👉 <i>Send <code>/mode</code> anytime to switch to Quality Picker.</i>"
+            )
+        else:
+            text = (
+                "🔘 <b>Switched to Quality Picker Mode!</b>\n\n"
+                "The bot will now ask you to choose quality (1080p, 720p, 480p, MP3) before downloading.\n\n"
+                "👉 <i>Send <code>/mode</code> anytime to switch to Instant Mode.</i>"
+            )
 
         keyboard = [
             [InlineKeyboardButton(toggle_label, callback_data="toggle_mode")],
-            [InlineKeyboardButton("🔙 Close", callback_data="close_settings")],
         ]
 
-        await query.edit_message_text(
-            f"✅ <b>Settings Updated!</b>\n\n"
-            f"Active Mode: {mode_status}\n\n"
-            f"• <b>⚡ Instant Mode:</b> Immediately downloads upon pasting a link.\n"
-            f"• <b>🔘 Quality Picker:</b> Shows resolution buttons (1080p, 720p, 480p) or MP3.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
-    # 2. Open Settings Menu
-    if data == "open_settings":
-        current_mode = config.get_user_mode(user_id)
-        is_instant = (current_mode == "instant")
-        mode_status = "⚡ <b>Instant Mode</b> (Fastest, zero clicks)" if is_instant else "🔘 <b>Quality Picker Mode</b> (Choose 1080p/720p/480p/MP3)"
-        toggle_label = "Switch to 🔘 Quality Picker" if is_instant else "Switch to ⚡ Instant Mode"
-
-        keyboard = [
-            [InlineKeyboardButton(toggle_label, callback_data="toggle_mode")],
-            [InlineKeyboardButton("🔙 Close", callback_data="close_settings")],
-        ]
-
-        text = (
-            f"⚙️ <b>Download Settings & Mode</b>\n\n"
-            f"Current Mode: {mode_status}\n\n"
-            f"• <b>⚡ Instant:</b> Instantly downloads the best quality video as soon as you drop a link.\n"
-            f"• <b>🔘 Quality Picker:</b> Lets you select resolution (1080p, 720p, 480p) or MP3."
-        )
         try:
-            await query.message.reply_text(
+            await query.edit_message_text(
                 text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
-            pass
+            await query.message.reply_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.HTML,
+            )
         return
 
-    # 3. Open Admin Contact
+    # 2. Open Admin Contact
     if data == "open_admin":
         keyboard = [
             [InlineKeyboardButton("💬 Message @RahilAnw4r", url=config.ADMIN_LINK)]
@@ -800,20 +798,12 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    # 4. Open Help
+    # 3. Open Help
     if data == "open_help":
         await help_command(update, context)
         return
 
-    # 5. Close Settings
-    if data == "close_settings":
-        try:
-            await query.delete_message()
-        except Exception:
-            pass
-        return
-
-    # 6. Download Buttons: format -> dl:<action>:<session_id>
+    # 4. Download Buttons: format -> dl:<action>:<session_id>
     parts = data.split(":")
     if len(parts) < 3 or parts[0] != "dl":
         return
@@ -824,7 +814,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     session = url_sessions.get(session_id)
     if not session:
         await query.edit_message_text(
-            "⚠️ <i>This download session has expired or the link was already downloaded. Please paste the link again!</i>",
+            "⚠️ <i>This download session has expired. Please paste the link again!</i>",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -956,7 +946,7 @@ def main():
     # Start health check server for cloud hosting platforms (Render, Koyeb, etc.)
     start_health_server()
 
-    print("🚀 Initializing Universal Media Downloader Bot with Instant & Quality Picker modes...")
+    print("🚀 Initializing Universal Media Downloader Bot...")
     app = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
@@ -970,9 +960,7 @@ def main():
     # Core commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("settings", settings_command))
-    app.add_handler(CommandHandler("mode", settings_command))
-    app.add_handler(CommandHandler("quality", settings_command))
+    app.add_handler(CommandHandler("mode", mode_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("contact", admin_command))
     app.add_handler(CommandHandler("about", about_command))

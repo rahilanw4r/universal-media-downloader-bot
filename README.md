@@ -111,11 +111,10 @@ docker compose logs -f
 
 | Command | Description |
 |---|---|
-| `/start` | Welcome greeting, supported platforms, and quick settings |
-| `/settings` | Toggle between *⚡ Instant Mode* and *🔘 Quality Picker* |
-| `/mode` / `/quality` | Quick switch your download quality mode |
+| `/start` | Welcome greeting, supported platforms, and status |
+| `/mode` | Flip between *⚡ Instant Mode* and *🔘 Quality Picker* |
 | `/mp3 <url>` | Directly extract 192k MP3 audio with cover art |
-| `/admin` | Contact the bot developer & admin directly |
+| `/admin` | Contact the bot developer & admin directly (@RahilAnw4r) |
 | `/about` | Technical specs, engine versions, and architecture |
 | `/help` | Complete user manual and instructions |
 
