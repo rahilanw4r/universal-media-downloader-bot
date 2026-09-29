@@ -155,7 +155,7 @@ async def require_channel_membership(update: Update, context: ContextTypes.DEFAU
     return False
 
 
-async def check_user_auth(update: Update) -> bool:
+async def check_user_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Validate if user is authorized to use the bot and track interaction."""
     user = update.effective_user
     if not user:
@@ -178,7 +178,7 @@ async def check_user_auth(update: Update) -> bool:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command with rich greeting, command directory, and quick buttons."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     user = update.effective_user
@@ -229,7 +229,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     help_text = (
@@ -274,7 +274,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /mode command: quickly flip between Instant Mode and Quality Picker."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     user_id = update.effective_user.id
@@ -325,7 +325,7 @@ async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /admin and /contact commands."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     admin_text = (
@@ -353,7 +353,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /about command."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     about_text = (
@@ -383,7 +383,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /stats and /analytics commands."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     user = update.effective_user
@@ -414,7 +414,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /broadcast <message> - Admin only announcement to all bot users."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     user = update.effective_user
@@ -779,7 +779,7 @@ async def execute_download(
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle links based on user preference (Instant download vs Interactive Quality Picker)."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     message = update.message
@@ -886,7 +886,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if not query or not query.data:
         return
 
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     await query.answer()
@@ -1070,7 +1070,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /mp3 and /audio commands to directly extract MP3."""
-    if not await check_user_auth(update):
+    if not await check_user_auth(update, context):
         return
 
     message = update.message
