@@ -203,6 +203,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <code>/stats</code> — View user analytics & download count\n"
         f"• <code>/help</code> — Full guide & instructions\n"
         f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
+        f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a> (optional; no join required)\n\n"
+        f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a> (optional; no join required)\n\n"
         f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
