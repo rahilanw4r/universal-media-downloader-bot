@@ -114,6 +114,47 @@ class ProgressTracker:
         asyncio.run_coroutine_threadsafe(_edit(), self.loop)
 
 
+async def require_channel_membership(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Require users to join the public updates channel before using bot features."""
+    user = update.effective_user
+    if not user:
+        return False
+
+    try:
+        member = await context.bot.get_chat_member(chat_id="@BootScreenBots", user_id=user.id)
+        if member.status in ("member", "administrator", "creator"):
+            return True
+    except Exception:
+        logger.exception("Could not verify membership in @BootScreenBots")
+        message = (
+            "⚠️ <b>Membership check is temporarily unavailable.</b>\n"
+            "Please try again in a moment. If this keeps happening, contact the bot admin."
+        )
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("↻ Try Again", callback_data="check_membership")
+        ]])
+        if update.message:
+            await update.message.reply_text(message, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        elif update.callback_query and update.callback_query.message:
+            await update.callback_query.message.reply_text(message, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+        return False
+
+    message = (
+        "🔒 <b>Join our updates channel to use this bot.</b>\n\n"
+        "1. Tap <b>Join Channel</b> below and join @BootScreenBots.\n"
+        "2. Return here and tap <b>I've Joined</b> to verify."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel", url="https://t.me/BootScreenBots")],
+        [InlineKeyboardButton("✅ I've Joined", callback_data="check_membership")],
+    ])
+    if update.message:
+        await update.message.reply_text(message, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    elif update.callback_query and update.callback_query.message:
+        await update.callback_query.message.reply_text(message, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    return False
+
+
 async def check_user_auth(update: Update) -> bool:
     """Validate if user is authorized to use the bot and track interaction."""
     user = update.effective_user
@@ -132,7 +173,7 @@ async def check_user_auth(update: Update) -> bool:
                 parse_mode=ParseMode.HTML,
             )
         return False
-    return True
+    return await require_channel_membership(update, context)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -851,6 +892,15 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     data = query.data
     user_id = update.effective_user.id
+
+    # Re-check the channel gate when the user taps verification.
+    if data == "check_membership":
+        if await require_channel_membership(update, context):
+            await query.answer("Membership verified. You're all set!", show_alert=True)
+            await query.message.reply_text("✅ Membership verified. Send me a media link to get started.")
+        else:
+            await query.answer("Please join @BootScreenBots first.", show_alert=True)
+        return
 
     # 1. Toggle Mode Setting
     if data == "toggle_mode":
