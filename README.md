@@ -111,7 +111,7 @@ docker compose logs -f
 
 ---
 
-## 💬 Community & access\n\nJoin [@BootScreenCommunity](https://t.me/BootScreenCommunity) for optional conversations and user discussion. This is not required to use the bot. The updates channel [@Bootscreen](https://t.me/Bootscreen) is the only channel required by the bot's membership gate.\n\n## ⌨️ Bot Commands
+## 💬 Community & access\n\nJoin [@BootScreenCommunity](https://t.me/BootScreenCommunity) for conversations and user discussion. The updates channel [@Bootscreen](https://t.me/Bootscreen) is the only channel required by the bot's membership gate.\n\n## ⌨️ Bot Commands
 
 | Command | Description |
 |---|---|
