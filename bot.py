@@ -156,24 +156,25 @@ async def require_channel_membership(update: Update, context: ContextTypes.DEFAU
 
 
 async def check_user_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Validate if user is authorized to use the bot and track interaction."""
+    """Authorize user, verify channel membership, then record eligible activity."""
     user = update.effective_user
     if not user:
         return False
 
-    # Automatically track user in persistent analytics
-    analytics.track_user(user.id, user.username, user.first_name)
-
     if not config.is_user_allowed(user.id):
-        if update.message:
-            await update.message.reply_text(
+        if update.effective_message:
+            await update.effective_message.reply_text(
                 f"⛔ <b>Access Denied</b>: You are not authorized to use this bot.\n"
                 f"Your User ID is: <code>{user.id}</code>\n"
-                f"Contact Admin: <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>",
+                f"Contact Admin: <a href=\"{config.ADMIN_LINK}\">{html.escape(config.ADMIN_USERNAME)}</a>",
                 parse_mode=ParseMode.HTML,
             )
         return False
-    return await require_channel_membership(update, context)
+
+    allowed = await require_channel_membership(update, context)
+    if allowed:
+        analytics.track_user(user.id, user.username, user.first_name)
+    return allowed
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -264,7 +265,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ]
     ]
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         help_text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML,
@@ -361,7 +362,8 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "• <b>Version:</b> 2.1.0 (Cloud Edition)\n"
         "• <b>Architecture:</b> Python 3.11 • yt-dlp • FFmpeg • Gallery-DL\n"
-        "• <b>Hosting:</b> 24/7 Cloud Active\n"
+        f"• <b>Runtime:</b> Process uptime {analytics.format_uptime()}\n"
+        "• <b>Availability:</b> Built for continuous operation; uptime depends on hosting provider\n"
         f"• <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n\n"
         "High-performance media extractor built for speed, quality, and simplicity."
     )
@@ -886,19 +888,19 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if not query or not query.data:
         return
 
-    if not await check_user_auth(update, context):
-        return
-
     data = query.data
     user_id = update.effective_user.id
 
-    # Re-check the channel gate when the user taps verification.
+    # Handle membership verification before the normal auth gate.
     if data == "check_membership":
         if await require_channel_membership(update, context):
             await query.answer("Membership verified. You're all set!", show_alert=True)
             await start_command(update, context)
         else:
             await query.answer("Please join @BootScreenBots first.", show_alert=True)
+        return
+
+    if not await check_user_auth(update, context):
         return
 
     await query.answer()
