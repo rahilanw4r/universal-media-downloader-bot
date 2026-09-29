@@ -531,18 +531,18 @@ class MediaDownloader:
         ydl_opts = self._get_ydl_base_opts()
 
         if resolution and resolution > 0:
+            # Respect the selected resolution, but do not filter by individual
+            # stream filesize: separate video/audio streams can exceed that
+            # threshold even when the final merged file is suitable.
             format_spec = (
-                f"bestvideo[height<={resolution}][filesize<=48M]+bestaudio/"
-                f"best[height<={resolution}][filesize<=48M]/"
                 f"bestvideo[height<={resolution}]+bestaudio/"
-                f"best[height<={resolution}]/best"
+                f"best[height<={resolution}]"
             )
         else:
-            format_spec = (
-                "bestvideo[filesize<=48M]+bestaudio/best[filesize<=48M]/"
-                "bestvideo[height<=720]+bestaudio/best[height<=720]/"
-                "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
-            )
+            # Instant mode should start from the source's highest available
+            # quality. If the merged file is too large for Telegram, the
+            # size-aware compression step below handles it.
+            format_spec = "bestvideo+bestaudio/best"
 
         ydl_opts.update({
             "paths": {"home": temp_dir.as_posix()},
