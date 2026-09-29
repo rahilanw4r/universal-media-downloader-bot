@@ -133,17 +133,9 @@ class MediaDownloader:
             "windowsfilenames": True,
             "trim_file_name": 50,
             "ffmpeg_location": FFMPEG_EXE,
-            "user_agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-            ),
-            # Bypass YouTube "Sign in to confirm you're not a bot" on datacenter/cloud IPs
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "android_vr"],
-                    "player_skip": ["webpage", "configs"],
-                }
-            },
+            # Let yt-dlp select its currently supported YouTube player clients.
+            # Hard-coding older clients and a spoofed browser User-Agent can trigger
+            # YouTube's bot checks or create inconsistent client fingerprints.
         }
         if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
             opts["cookiefile"] = str(config.COOKIES_FILE)
