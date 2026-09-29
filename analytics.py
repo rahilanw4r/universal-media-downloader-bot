@@ -1,5 +1,6 @@
 import json
 import time
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Dict, Any, Optional, List
 BASE_DIR = Path(__file__).resolve().parent
 STATS_FILE = BASE_DIR / "bot_stats.json"
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 # In-memory stats cache
 _stats: Dict[str, Any] = {
@@ -40,8 +41,10 @@ def _load_stats() -> None:
 def _save_stats() -> None:
     """Persist current stats to bot_stats.json."""
     try:
-        with open(STATS_FILE, "w", encoding="utf-8") as f:
+        tmp_file = STATS_FILE.with_suffix(".tmp")
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(_stats, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_file, STATS_FILE)
     except Exception:
         pass
 
@@ -254,15 +257,15 @@ def format_admin_dashboard() -> str:
 def format_public_dashboard() -> str:
     """Generate public community stats for regular users."""
     summary = get_analytics_summary()
-    total_users = max(summary["total_users"], 1)
+    total_users = summary["total_users"]
     total_downloads = summary["total_downloads"]
 
     return (
         "📊 <b>Universal Media Downloader Statistics</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 <b>Community:</b> <code>{total_users:,}+</code> happy users\n"
-        f"📥 <b>Media Delivered:</b> <code>{total_downloads:,}+</code> files\n"
+        f"👥 <b>Registered users:</b> <code>{total_users:,}</code>\n"
+        f"📥 <b>Recorded downloads:</b> <code>{total_downloads:,}</code>\n"
         "⚡ <b>Supported:</b> Instagram, YouTube, TikTok, Pinterest, X, Reddit & 1,000+ sites\n"
-        "🚀 <b>Performance:</b> Ultra-fast 1080p downloads with zero compression loss!\n\n"
+        "🚀 <b>Quality:</b> Best available source quality; no intentional recompression.\n\n"
         "💬 <i>Enjoying the bot? Share it with friends or add it to your group chats!</i>"
     )
