@@ -219,7 +219,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         ],
     ])
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         welcome_text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML,
@@ -889,7 +889,6 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if not await check_user_auth(update, context):
         return
 
-    await query.answer()
     data = query.data
     user_id = update.effective_user.id
 
@@ -897,10 +896,12 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     if data == "check_membership":
         if await require_channel_membership(update, context):
             await query.answer("Membership verified. You're all set!", show_alert=True)
-            await query.message.reply_text("✅ Membership verified. Send me a media link to get started.")
+            await start_command(update, context)
         else:
             await query.answer("Please join @BootScreenBots first.", show_alert=True)
         return
+
+    await query.answer()
 
     # 1. Toggle Mode Setting
     if data == "toggle_mode":
