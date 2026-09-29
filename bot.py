@@ -121,11 +121,11 @@ async def require_channel_membership(update: Update, context: ContextTypes.DEFAU
         return False
 
     try:
-        member = await context.bot.get_chat_member(chat_id="@BootScreenBots", user_id=user.id)
+        member = await context.bot.get_chat_member(chat_id="@Bootscreen", user_id=user.id)
         if member.status in ("member", "administrator", "creator"):
             return True
     except Exception:
-        logger.exception("Could not verify membership in @BootScreenBots")
+        logger.exception("Could not verify membership in @Bootscreen")
         message = (
             "⚠️ <b>Membership check is temporarily unavailable.</b>\n"
             "Please try again in a moment. If this keeps happening, contact the bot admin."
@@ -141,11 +141,11 @@ async def require_channel_membership(update: Update, context: ContextTypes.DEFAU
 
     message = (
         "🔒 <b>Join our updates channel to use this bot.</b>\n\n"
-        "1. Tap <b>Join Channel</b> below and join @BootScreenBots.\n"
+        "1. Tap <b>Join Channel</b> below and join @Bootscreen.\n"
         "2. Return here and tap <b>I've Joined</b> to verify."
     )
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Join Channel", url="https://t.me/BootScreenBots")],
+        [InlineKeyboardButton("📢 Join Channel", url="https://t.me/Bootscreen")],
         [InlineKeyboardButton("✅ I've Joined", callback_data="check_membership")],
     ])
     if update.message:
@@ -897,7 +897,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             await query.answer("Membership verified. You're all set!", show_alert=True)
             await start_command(update, context)
         else:
-            await query.answer("Please join @BootScreenBots first.", show_alert=True)
+            await query.answer("Please join @Bootscreen first.", show_alert=True)
         return
 
     if not await check_user_auth(update, context):
