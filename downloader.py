@@ -599,24 +599,16 @@ class MediaDownloader:
         filesize_mb = filesize / (1024 * 1024)
         duration = (info or {}).get("duration", 0)
 
-        # Smart Auto-Compression: if video exceeds Telegram's 50MB limit, compress it
-        if filesize_mb > 49.5 and media_type == "video":
-            logger.info("Video (%.1f MB) exceeds 50 MB, attempting auto-compression...", filesize_mb)
-            compressed_file = self._compress_video_to_fit(target_file, temp_dir, duration)
-            if compressed_file:
-                target_file = compressed_file
-                out_files = [target_file]
-                filesize = target_file.stat().st_size
-                filesize_mb = filesize / (1024 * 1024)
-
+        # Preserve the downloaded source file without transcoding or downscaling.
+        # The standard Telegram Bot API currently accepts uploads up to 50 MB.
+        # Reject oversized files rather than silently degrading their quality.
         if filesize_mb > 50:
             dur_mins = int(duration // 60) if duration else 0
             dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
             raise DownloaderError(
-                f"Video is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit){dur_msg}.\n\n"
-                f"💡 Tips to download this video:\n"
-                f"1. Send /mode to switch to Quality Picker, then select 480p SD or 360p Low.\n"
-                f"2. Or send /mp3 <link> to extract the full audio track!"
+                f"Original video is {filesize_mb:.1f} MB, which exceeds Telegram's 50 MB bot upload limit{dur_msg}. "
+                f"The bot did not compress or lower its quality. "
+                f"Sending larger originals requires a self-hosted Telegram Bot API server."
             )
 
         title = (info or {}).get("title", "Video")
