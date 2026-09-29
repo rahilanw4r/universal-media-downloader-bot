@@ -99,25 +99,25 @@ docker compose logs -f
 
 ---
 
-## ☁️ 1-Click Cloud Deployment (Free 24/7)
+## ☁️ Cloud Deployment
 
 ### Deploy on Koyeb:
 1. Fork or push this repository to your GitHub.
-2. Sign up at [koyeb.com](https://www.koyeb.com/) (Free).
+2. Sign up at [koyeb.com](https://www.koyeb.com/) and choose a plan that meets your runtime needs. Free-tier availability and sleep policies can change.
 3. Create a new service from your GitHub repository.
 4. Set Environment Variable:
    - `TELEGRAM_BOT_TOKEN` = `your_bot_token`
-5. Click **Deploy**!
+5. Click **Deploy**! Continuous operation depends on your host, plan, and persistent storage; this repository does not guarantee 24/7 uptime.
 
 ---
 
-## ⌨️ Bot Commands
+## 💬 Community & access\n\nJoin [@BootScreenCommunity](https://t.me/BootScreenCommunity) for optional conversations and user discussion. This is not required to use the bot. The updates channel [@Bootscreen](https://t.me/Bootscreen) is the only channel required by the bot's membership gate.\n\n## ⌨️ Bot Commands
 
 | Command | Description |
 |---|---|
 | `/start` | Welcome greeting, supported platforms, and status |
 | `/mode` | Flip between *⚡ Instant Mode* and *🔘 Quality Picker* |
-| `/mp3 <url>` | Directly extract 192k MP3 audio with cover art |
+| `/mp3 <url>` (alias: `/audio`) | Extract MP3 audio with cover art |\n| `/stats` (alias: `/analytics`) | View usage analytics (admin view includes detailed metrics) |\n| `/broadcast <message>` | Admin-only announcement to registered users |\n| `/contact` | Contact the developer (alias: `/admin`) |
 | `/admin` | Contact the bot developer & admin directly (@RahilAnw4r) |
 | `/about` | Technical specs, engine versions, and architecture |
 | `/help` | Complete user manual and instructions |
