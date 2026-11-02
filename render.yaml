@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: universal-media-downloader-bot
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: FORCE_SUB_CHANNEL
+        value: "@Bootscreen"
+      - key: AUTO_SPLIT_OVERSIZED_VIDEOS
+        value: "true"
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
