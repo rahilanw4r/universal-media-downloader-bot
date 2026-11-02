@@ -1,9 +1,9 @@
-python-telegram-bot[job-queue]>=20.7
-python-dotenv>=1.0.0
+python-telegram-bot[job-queue]>=21.0
+python-dotenv>=1.0.1
 yt-dlp>=2026.10.26
-imageio-ffmpeg>=0.5.0
-Pillow>=10.0.0
+imageio-ffmpeg>=0.5.1
+Pillow>=10.2.0
 pinterest-downloader>=4.2.0
-gallery-dl>=1.27.0
-instaloader>=4.10.0
-requests>=2.25.0
+gallery-dl>=1.28.0
+instaloader>=4.11.0
+requests>=2.31.0

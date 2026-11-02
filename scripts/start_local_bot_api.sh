@@ -4,9 +4,27 @@
 # ====================================================================
 set -e
 
-API_ID="your_api_id_here"
-API_HASH="your_api_hash_here"
-HTTP_PORT="8081"
+# Load credentials from .env if present
+if [ -f .env ]; then
+    # Read variables safely
+    while IFS='=' read -r key val || [ -n "$key" ]; do
+        key=$(echo "$key" | tr -d ' \r\t')
+        val=$(echo "$val" | tr -d '\r')
+        if [[ ! "$key" =~ ^# ]] && [ -n "$key" ]; then
+            export "$key=$val" 2>/dev/null || true
+        fi
+    done < .env
+fi
+
+API_ID="${TELEGRAM_API_ID:-$1}"
+API_HASH="${TELEGRAM_API_HASH:-$2}"
+HTTP_PORT="${LOCAL_BOT_API_PORT:-8081}"
+
+if [ -z "$API_ID" ] || [ "$API_ID" = "your_api_id_here" ] || [ -z "$API_HASH" ] || [ "$API_HASH" = "your_api_hash_here" ]; then
+    echo "❌ Error: TELEGRAM_API_ID and TELEGRAM_API_HASH must be configured in .env or passed as arguments."
+    echo "Usage: ./scripts/start_local_bot_api.sh [API_ID] [API_HASH]"
+    exit 1
+fi
 
 echo "🚀 Starting Telegram Local Bot API Server..."
 
@@ -37,3 +55,4 @@ else
     echo "Then re-run this script: bash scripts/start_local_bot_api.sh"
     exit 1
 fi
+
