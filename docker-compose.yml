@@ -1,16 +1,40 @@
 version: "3.8"
 
 services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: telegram-bot-api
+    restart: always
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-your_api_id_here}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-your_api_hash_here}
+      TELEGRAM_LOCAL: "1"
+      TELEGRAM_HTTP_PORT: "8081"
+    volumes:
+      - telegram-api-data:/var/lib/telegram-bot-api
+    ports:
+      - "8081:8081"
+
   telegram-downloader-bot:
     build: .
     container_name: media-downloader-bot
     restart: always
+    depends_on:
+      - telegram-bot-api
     env_file:
       - .env
+    environment:
+      - LOCAL_BOT_API_URL=http://telegram-bot-api:8081
+      - MAX_FILE_SIZE_MB=2000
+      - AUTO_SPLIT_OVERSIZED_VIDEOS=true
     volumes:
       - ./downloads:/app/downloads
+      - telegram-api-data:/var/lib/telegram-bot-api
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  telegram-api-data:
