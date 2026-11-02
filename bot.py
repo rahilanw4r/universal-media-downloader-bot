@@ -15,6 +15,7 @@ from telegram import (
     InputMediaVideo,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    BotCommand,
 )
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
@@ -132,32 +133,38 @@ async def require_channel_membership(update: Update, context: ContextTypes.DEFAU
     if not user:
         return False
 
+    # Admins always bypass channel requirement
+    if config.is_admin(user):
+        return True
+
+    # Group and supergroup chats bypass channel requirement so group downloads work smoothly
+    chat = update.effective_chat
+    if chat and chat.type in ("group", "supergroup"):
+        return True
+
+    channel = config.FORCE_SUB_CHANNEL
+    if not channel or channel.lower() in ("none", "off", "false", "disable", "disabled"):
+        return True
+
+    clean_channel = channel.lstrip("@")
+    channel_url = f"https://t.me/{clean_channel}"
+
     try:
-        member = await context.bot.get_chat_member(chat_id="@Bootscreen", user_id=user.id)
+        member = await context.bot.get_chat_member(chat_id=channel, user_id=user.id)
         if member.status in ("member", "administrator", "creator"):
             return True
-    except Exception:
-        logger.exception("Could not verify membership in @Bootscreen")
-        message = (
-            "⚠️ <b>Membership check is temporarily unavailable.</b>\n"
-            "Please try again in a moment. If this keeps happening, contact the bot admin."
-        )
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("↻ Try Again", callback_data="check_membership")
-        ]])
-        if update.message:
-            await update.message.reply_text(message, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        elif update.callback_query and update.callback_query.message:
-            await update.callback_query.message.reply_text(message, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-        return False
+    except Exception as e:
+        # If bot is not in the channel or lacks permissions, fail open gracefully
+        logger.warning(f"Could not verify membership in {channel}: {e}. Failing open.")
+        return True
 
     message = (
-        "🔒 <b>Join our updates channel to use this bot.</b>\n\n"
-        "1. Tap <b>Join Channel</b> below and join @Bootscreen.\n"
-        "2. Return here and tap <b>I've Joined</b> to verify."
+        f"🔒 <b>Join our updates channel to use this bot!</b>\n\n"
+        f"1. Tap <b>Join Channel</b> below to join {html.escape(channel)}.\n"
+        f"2. Return here and tap <b>I've Joined</b> to continue."
     )
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Join Channel", url="https://t.me/Bootscreen")],
+        [InlineKeyboardButton("📢 Join Channel", url=channel_url)],
         [InlineKeyboardButton("✅ I've Joined", callback_data="check_membership")],
     ])
     if update.message:
@@ -212,6 +219,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <b>Paste any link</b> — Auto-download media\n"
         f"• <code>/mode</code> — Toggle Instant vs Quality Picker\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
+        f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
         f"• <code>/help</code> — Full guide & instructions\n"
         f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
@@ -246,6 +254,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await check_user_auth(update, context):
         return
 
+    user = update.effective_user
+    is_adm = config.is_admin(user)
+
+    admin_section = ""
+    if is_adm:
+        admin_section = (
+            "\n👑 <b>Admin Commands:</b>\n"
+            "• <code>/cookies</code> — Cookie status & diagnostics\n"
+            "• <code>/clean</code> — Purge temporary download cache\n"
+            "• <code>/broadcast &lt;msg&gt;</code> — Send announcement to all users\n"
+            "• <i>Send cookies.txt file directly to update cookies</i>\n"
+        )
+
     help_text = (
         "📖 <b>Universal Downloader — User Manual</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -264,11 +285,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/start</code> — Greeting, status & quick buttons\n"
         "• <code>/mode</code> — Switch Instant vs Quality Picker\n"
         "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
+        "• <code>/ping</code> — Check server latency & health\n"
         "• <code>/stats</code> — User count & download analytics\n"
         "• <code>/admin</code> — Contact developer directly\n"
         "• <code>/about</code> — Bot technical specifications\n"
-        "• <code>/help</code> — Show this manual\n\n"
-        f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"        f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
+        "• <code>/help</code> — Show this manual\n"
+        f"{admin_section}\n"
+        f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
+        f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
     keyboard = [
@@ -752,10 +776,21 @@ async def execute_download(
 
             except DownloaderError as e:
                 logger.error(f"Download error: {e}")
-                error_text = (
-                    f"❌ <b>Download Failed:</b>\n{html.escape(str(e))}\n\n"
-                    f"💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
-                )
+                raw_err = str(e)
+                if any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot")):
+                    help_note = (
+                        "\n\n💡 <b>Authentication Notice:</b> This platform is currently requiring login credentials or cookies. "
+                        f"Admin can upload an updated <code>cookies.txt</code> using <code>/cookies</code>."
+                    )
+                elif any(x in raw_err.lower() for x in ("too large", "50mb", "50 mb")):
+                    help_note = (
+                        "\n\n📦 <b>Size Limit Notice:</b> Telegram allows bots to send files up to 50MB. "
+                        "The video could not be compressed below 50MB without severe quality loss."
+                    )
+                else:
+                    help_note = f"\n\n💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
+
+                error_text = f"❌ <b>Download Failed:</b>\n{html.escape(raw_err)}{help_note}"
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=error_text,
@@ -764,10 +799,18 @@ async def execute_download(
                 )
             except Exception as e:
                 logger.exception("Unexpected error sending media")
+                raw_err = str(e)
+                if "image_process_failed" in raw_err.lower():
+                    friendly_err = "Telegram rejected image format rendering. Please try again."
+                elif "file is too big" in raw_err.lower():
+                    friendly_err = "File exceeds Telegram bot 50MB upload limit."
+                else:
+                    friendly_err = html.escape(raw_err)
+
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"❌ <b>Error uploading media:</b> {html.escape(str(e))}\n\n"
+                        f"❌ <b>Error uploading media:</b> {friendly_err}\n\n"
                         f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
                     ),
                     parse_mode=ParseMode.HTML,
@@ -984,10 +1027,11 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     # Handle membership verification before the normal auth gate.
     if data == "check_membership":
         if await require_channel_membership(update, context):
-            await query.answer("Membership verified. You're all set!", show_alert=True)
+            await query.answer("✅ Membership verified! Welcome aboard.", show_alert=True)
             await start_command(update, context)
         else:
-            await query.answer("Please join @Bootscreen first.", show_alert=True)
+            channel_name = config.FORCE_SUB_CHANNEL or "@Bootscreen"
+            await query.answer(f"Please join {channel_name} first, then tap again!", show_alert=True)
         return
 
     if not await check_user_auth(update, context):
@@ -1197,8 +1241,85 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /ping command: check bot response latency and server status."""
+    if not await check_user_auth(update, context):
+        return
+
+    start_time = time.time()
+    msg = await update.effective_message.reply_text("🏓 <i>Pinging...</i>", parse_mode=ParseMode.HTML)
+    latency_ms = int((time.time() - start_time) * 1000)
+
+    sem = get_download_semaphore()
+    active_downloads = MAX_CONCURRENT_DOWNLOADS - sem._value if sem else 0
+
+    ping_text = (
+        "🏓 <b>Pong! Server Status: Operational</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⚡ <b>Latency:</b> <code>{latency_ms} ms</code>\n"
+        f"⏱️ <b>Uptime:</b> <code>{analytics.format_uptime()}</code>\n"
+        f"🔄 <b>Active Downloads:</b> <code>{max(0, active_downloads)} / {MAX_CONCURRENT_DOWNLOADS}</code>\n"
+        f"🤖 <b>Architecture:</b> Python 3 • yt-dlp • FFmpeg • Gallery-DL\n\n"
+        f"<i>All download pipelines running smoothly.</i>"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
+            InlineKeyboardButton("📊 Stats", callback_data="refresh_stats"),
+        ]
+    ])
+    await msg.edit_text(ping_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+async def clean_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /clean and /clearcache - Admin command to purge temporary downloaded files."""
+    if not await check_user_auth(update, context):
+        return
+
+    user = update.effective_user
+    if not config.is_admin(user):
+        await update.effective_message.reply_text(
+            "⛔ <b>Access Denied:</b> This command is restricted to the bot admin.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    status_msg = await update.effective_message.reply_text("🧹 <i>Scanning for leftover cache files...</i>", parse_mode=ParseMode.HTML)
+
+    download_dir = Path(downloader.download_dir)
+    freed_bytes = 0
+    deleted_files = 0
+    deleted_dirs = 0
+
+    if download_dir.exists():
+        import shutil
+        for item in download_dir.iterdir():
+            try:
+                if item.is_file():
+                    freed_bytes += item.stat().st_size
+                    item.unlink()
+                    deleted_files += 1
+                elif item.is_dir():
+                    for sub in item.rglob("*"):
+                        if sub.is_file():
+                            freed_bytes += sub.stat().st_size
+                    shutil.rmtree(item, ignore_errors=True)
+                    deleted_dirs += 1
+            except Exception as e:
+                logger.warning(f"Could not remove {item}: {e}")
+
+    freed_mb = freed_bytes / (1024 * 1024)
+    await status_msg.edit_text(
+        f"✅ <b>Cache Cleanup Complete!</b>\n\n"
+        f"• 🗑️ <b>Files Deleted:</b> <code>{deleted_files}</code>\n"
+        f"• 📁 <b>Folders Purged:</b> <code>{deleted_dirs}</code>\n"
+        f"• 💾 <b>Disk Space Freed:</b> <code>{freed_mb:.2f} MB</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
 async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /cookies - Admin diagnostic command to check YouTube cookies status."""
+    """Handle /cookies - Admin diagnostic command to check YouTube and platform cookies status."""
     if not await check_user_auth(update, context):
         return
 
@@ -1212,21 +1333,23 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     st = config.get_cookies_status()
     loaded_icon = "✅ Active" if st.get("loaded") else "⚠️ Inactive / Missing"
-    login_icon = "🔑 Authenticated Account" if st.get("has_login") else "👤 Guest / Anonymous Session"
+    yt_login_icon = "🔑 Authenticated" if st.get("has_login") else "👤 Guest Session"
+    ig_login_icon = "🔑 Authenticated" if st.get("has_ig_login") else ("👤 Guest Session" if st.get("instagram_cookies", 0) > 0 else "None")
 
     msg = (
-        "🍪 <b>YouTube & Platform Cookies Diagnostics</b>\n"
+        "🍪 <b>Platform Authentication Diagnostics</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"• <b>Status:</b> {loaded_icon}\n"
         f"• <b>Details:</b> {html.escape(st.get('message', ''))}\n"
         f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
-        f"• <b>YouTube Cookies:</b> <code>{st.get('youtube_cookies', 0)}</code> ({login_icon})\n"
-        f"• <b>Path:</b> <code>{html.escape(str(st.get('path') or 'None'))}</code>\n\n"
-        "⚡ <b>Bypass Engine:</b> Even without cookies, YouTube downloads automatically fallback to mobile client bypass (iOS/Android)!\n\n"
+        f"• <b>YouTube:</b> <code>{st.get('youtube_cookies', 0)}</code> cookies ({yt_login_icon})\n"
+        f"• <b>Instagram:</b> <code>{st.get('instagram_cookies', 0)}</code> cookies ({ig_login_icon})\n"
+        f"• <b>Storage File:</b> <code>{html.escape(str(st.get('path') or 'None'))}</code>\n\n"
+        "⚡ <b>Mobile Client Bypass:</b> YouTube downloads automatically use iOS/Android bypass when cookies expire.\n\n"
         "📤 <b>How to Update Cookies:</b>\n"
         "1. Export your cookies using the <b>'Get cookies.txt LOCALLY'</b> browser extension.\n"
         "2. Send or forward the <code>cookies.txt</code> file directly to this chat.\n"
-        "3. The bot will validate and activate it immediately with zero downtime!"
+        "3. The bot validates and activates it instantly with zero downtime!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -1268,6 +1391,7 @@ async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"✅ <b>Cookies Updated Successfully!</b>\n\n"
                 f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
                 f"• <b>YouTube Cookies:</b> <code>{st.get('youtube_cookies', 0)}</code>\n"
+                f"• <b>Instagram Cookies:</b> <code>{st.get('instagram_cookies', 0)}</code>\n"
                 f"• <b>Saved to:</b> <code>{html.escape(str(st.get('path')))}</code>\n\n"
                 f"🎉 The bot is now using your updated cookies for all downloads!",
                 parse_mode=ParseMode.HTML,
@@ -1280,6 +1404,25 @@ async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_T
             f"❌ <b>Error processing cookies:</b> {html.escape(str(e))}",
             parse_mode=ParseMode.HTML,
         )
+
+
+async def post_init(application: Application) -> None:
+    """Register bot commands in Telegram's native command menu."""
+    commands = [
+        BotCommand("start", "Start the bot & main menu"),
+        BotCommand("mode", "Toggle Instant vs Quality Picker"),
+        BotCommand("mp3", "Extract MP3 audio (192kbps)"),
+        BotCommand("ping", "Check bot latency & server status"),
+        BotCommand("stats", "View download analytics"),
+        BotCommand("help", "User manual & instructions"),
+        BotCommand("about", "About bot & specifications"),
+        BotCommand("admin", "Contact developer / support"),
+    ]
+    try:
+        await application.bot.set_my_commands(commands)
+        logger.info("Telegram command menu successfully registered.")
+    except Exception as e:
+        logger.warning("Could not register Telegram command menu: %s", e)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -1325,6 +1468,7 @@ def main():
         .write_timeout(300)
         .connect_timeout(60)
         .pool_timeout(60)
+        .post_init(post_init)
         .build()
     )
 
@@ -1337,6 +1481,9 @@ def main():
     app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("analytics", stats_command))
+    app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("clean", clean_command))
+    app.add_handler(CommandHandler("clearcache", clean_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
     app.add_handler(CommandHandler("cookies", cookies_command))
     app.add_handler(CommandHandler("cookie", cookies_command))

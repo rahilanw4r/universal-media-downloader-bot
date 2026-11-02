@@ -146,6 +146,22 @@ class TestDownloader(unittest.TestCase):
         status = config.get_cookies_status()
         self.assertIn("loaded", status)
         self.assertIn("youtube_cookies", status)
+        self.assertIn("instagram_cookies", status)
+
+    def test_force_sub_channel_config(self):
+        self.assertTrue(hasattr(config, "FORCE_SUB_CHANNEL"))
+        self.assertEqual(config.FORCE_SUB_CHANNEL, "@Bootscreen")
+
+    def test_bot_command_handlers(self):
+        try:
+            import bot
+            self.assertTrue(callable(bot.ping_command))
+            self.assertTrue(callable(bot.clean_command))
+            self.assertTrue(callable(bot.post_init))
+        except ModuleNotFoundError as e:
+            if "telegram" in str(e):
+                self.skipTest("python-telegram-bot not installed in test environment")
+            raise
 
     def test_sanitize_image_file(self):
         from downloader import sanitize_image_file

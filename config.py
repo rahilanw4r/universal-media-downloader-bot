@@ -28,6 +28,9 @@ ADMIN_USERNAME = "@RahilAnw4r"
 ADMIN_LINK = "https://t.me/RahilAnw4r"
 ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
 
+# Forced channel membership (set to empty or "none" to disable)
+FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "@Bootscreen").strip()
+
 # Optional: Restrict bot access to specific Telegram user IDs
 _allowed_raw = os.getenv("ALLOWED_TELEGRAM_USER_IDS", "").strip()
 ALLOWED_TELEGRAM_USER_IDS = [
@@ -122,14 +125,18 @@ def get_cookies_status() -> Dict[str, Any]:
             "path": None,
             "total_cookies": 0,
             "youtube_cookies": 0,
+            "instagram_cookies": 0,
             "has_login": False,
+            "has_ig_login": False,
         }
 
     try:
         size = COOKIES_FILE.stat().st_size
         lines = 0
         yt_count = 0
+        ig_count = 0
         has_login = False
+        has_ig_login = False
         with open(COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 line = line.strip()
@@ -140,6 +147,13 @@ def get_cookies_status() -> Dict[str, Any]:
                     yt_count += 1
                     if any(k in line for k in ("LOGIN_INFO", "SID", "SSID", "HSID", "__Secure-3PSID")):
                         has_login = True
+                if "instagram.com" in line:
+                    ig_count += 1
+                    if any(k in line for k in ("sessionid", "ds_user_id")):
+                        has_ig_login = True
+
+        yt_state = "logged in" if has_login else "guest"
+        ig_state = "logged in" if has_ig_login else ("present" if ig_count > 0 else "none")
 
         return {
             "loaded": True,
@@ -147,8 +161,10 @@ def get_cookies_status() -> Dict[str, Any]:
             "size_bytes": size,
             "total_cookies": lines,
             "youtube_cookies": yt_count,
+            "instagram_cookies": ig_count,
             "has_login": has_login,
-            "message": f"Active ({yt_count} YouTube cookies, {'authenticated' if has_login else 'guest session'}).",
+            "has_ig_login": has_ig_login,
+            "message": f"Active ({yt_count} YouTube [{yt_state}], {ig_count} Instagram [{ig_state}]).",
         }
     except Exception as e:
         return {
@@ -157,7 +173,9 @@ def get_cookies_status() -> Dict[str, Any]:
             "path": str(COOKIES_FILE),
             "total_cookies": 0,
             "youtube_cookies": 0,
+            "instagram_cookies": 0,
             "has_login": False,
+            "has_ig_login": False,
         }
 
 
