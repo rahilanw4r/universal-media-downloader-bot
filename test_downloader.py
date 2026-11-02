@@ -7,6 +7,8 @@ from downloader import (
     resolve_pinterest_url,
     is_twitter_url,
     is_instagram_url,
+    is_terabox_url,
+    extract_terabox_surl,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -40,6 +42,8 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(detect_platform("https://x.com/user/status/123"), "X (Twitter)")
         self.assertEqual(detect_platform("https://twitter.com/user/status/123"), "X (Twitter)")
         self.assertEqual(detect_platform("https://www.tiktok.com/@user/video/123"), "TikTok")
+        self.assertEqual(detect_platform("https://teraboxapp.com/s/1abc123"), "TeraBox")
+        self.assertEqual(detect_platform("https://1024tera.com/s/1xyz987"), "TeraBox")
         self.assertEqual(detect_platform("https://pin.it/abc123"), "Pinterest")
         self.assertEqual(detect_platform("https://www.reddit.com/r/videos/comments/123/"), "Reddit")
         self.assertEqual(detect_platform("https://example.com/video.mp4"), "Web Video")
@@ -61,6 +65,15 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_instagram_url("https://instagram.com/reel/C-123456/"))
         self.assertTrue(is_instagram_url("https://instagr.am/p/C-123456/"))
         self.assertFalse(is_instagram_url("https://x.com/user/status/123"))
+
+    def test_terabox_helpers(self):
+        self.assertTrue(is_terabox_url("https://teraboxapp.com/s/1RCBLl4RBXh446ZKoHgHZJt_Q"))
+        self.assertTrue(is_terabox_url("https://www.1024tera.com/sharing/link?surl=RCBLl4RBXh446ZKoHgHZJt_Q"))
+        self.assertTrue(is_terabox_url("https://terabox.com/s/1abcdef"))
+        self.assertFalse(is_terabox_url("https://youtube.com/watch?v=123"))
+
+        self.assertEqual(extract_terabox_surl("https://teraboxapp.com/s/1RCBLl4RBXh446ZKoHgHZJt_Q"), "RCBLl4RBXh446ZKoHgHZJt_Q")
+        self.assertEqual(extract_terabox_surl("https://1024tera.com/sharing/link?surl=TEST_KEY_123"), "TEST_KEY_123")
 
     def test_media_extensions(self):
         self.assertIn(".mp4", VIDEO_EXTS)
@@ -147,6 +160,7 @@ class TestDownloader(unittest.TestCase):
         self.assertIn("loaded", status)
         self.assertIn("youtube_cookies", status)
         self.assertIn("instagram_cookies", status)
+        self.assertIn("terabox_cookies", status)
 
     def test_force_sub_channel_config(self):
         self.assertTrue(hasattr(config, "FORCE_SUB_CHANNEL"))

@@ -242,7 +242,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     welcome_text = (
         f"👋 <b>Hello, {html.escape(user.first_name)}!</b>\n\n"
         f"Welcome to <b>Universal Media Downloader</b> 📥\n"
-        f"Download videos, photos, carousels & music from <b>Instagram, YouTube, TikTok, X (Twitter), Pinterest, Reddit</b> & 1,000+ sites.\n\n"
+        f"Download videos, photos, carousels & music from <b>Instagram, YouTube, TikTok, X (Twitter), TeraBox, Pinterest, Reddit</b> & 1,000+ sites.\n\n"
         f"⚙️ <b>Active Mode:</b> <code>{mode_text}</code>\n\n"
         f"👥 <b>Works in Group Chats!</b>\n"
         f"Add me to any group chat and I'll automatically download and send every media link shared by members!\n\n"
@@ -1432,6 +1432,7 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     loaded_icon = "✅ Active" if st.get("loaded") else "⚠️ Inactive / Missing"
     yt_login_icon = "🔑 Authenticated" if st.get("has_login") else "👤 Guest Session"
     ig_login_icon = "🔑 Authenticated" if st.get("has_ig_login") else ("👤 Guest Session" if st.get("instagram_cookies", 0) > 0 else "None")
+    tb_login_icon = "🔑 Authenticated" if st.get("has_tb_login") else ("👤 Guest Session" if st.get("terabox_cookies", 0) > 0 else "Bypass")
 
     msg = (
         "🍪 <b>Platform Authentication Diagnostics</b>\n"
@@ -1441,6 +1442,7 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
         f"• <b>YouTube:</b> <code>{st.get('youtube_cookies', 0)}</code> cookies ({yt_login_icon})\n"
         f"• <b>Instagram:</b> <code>{st.get('instagram_cookies', 0)}</code> cookies ({ig_login_icon})\n"
+        f"• <b>TeraBox:</b> <code>{st.get('terabox_cookies', 0)}</code> cookies ({tb_login_icon})\n"
         f"• <b>Storage File:</b> <code>{html.escape(str(st.get('path') or 'None'))}</code>\n\n"
         "⚡ <b>Mobile Client Bypass:</b> YouTube downloads automatically use iOS/Android bypass when cookies expire.\n\n"
         "📤 <b>How to Update Cookies:</b>\n"

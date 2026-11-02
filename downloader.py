@@ -67,7 +67,36 @@ PLATFORM_DOMAINS = {
     "reddit.com": "Reddit",
     "facebook.com": "Facebook",
     "fb.watch": "Facebook",
+    "terabox.com": "TeraBox",
+    "teraboxapp.com": "TeraBox",
+    "terabox.app": "TeraBox",
+    "1024tera.com": "TeraBox",
+    "1024terabox.com": "TeraBox",
+    "terasharelink.com": "TeraBox",
+    "teraboxlink.com": "TeraBox",
+    "freeterabox.com": "TeraBox",
+    "4funbox.com": "TeraBox",
+    "mirrobox.com": "TeraBox",
+    "nephobox.com": "TeraBox",
+    "momerybox.com": "TeraBox",
+    "tibibox.com": "TeraBox",
 }
+
+TERABOX_DOMAINS = (
+    "terabox.com",
+    "teraboxapp.com",
+    "terabox.app",
+    "1024tera.com",
+    "1024terabox.com",
+    "terasharelink.com",
+    "teraboxlink.com",
+    "freeterabox.com",
+    "4funbox.com",
+    "mirrobox.com",
+    "nephobox.com",
+    "momerybox.com",
+    "tibibox.com",
+)
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
@@ -124,6 +153,30 @@ def is_instagram_url(url: str) -> bool:
     """Check if URL belongs to Instagram."""
     url_lower = url.lower()
     return "instagram.com" in url_lower or "instagr.am" in url_lower
+
+
+def is_terabox_url(url: str) -> bool:
+    """Check if URL belongs to TeraBox or any of its mirror domains."""
+    url_lower = url.lower()
+    return any(d in url_lower for d in TERABOX_DOMAINS)
+
+
+def extract_terabox_surl(url: str) -> str:
+    """Extract canonical short URL key from any TeraBox link format."""
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "surl" in qs and qs["surl"]:
+        surl = qs["surl"][0]
+    elif "/s/" in parsed.path:
+        surl = parsed.path.split("/s/")[1].split("/")[0].split("?")[0]
+    elif "/sharing/link" in parsed.path and "surl" in qs:
+        surl = qs["surl"][0]
+    else:
+        surl = parsed.path.strip("/").split("/")[-1]
+    if surl.startswith("1"):
+        surl = surl[1:]
+    return surl
 
 
 def render_progress_bar(percent: float, width: int = 10) -> str:
@@ -493,6 +546,266 @@ class MediaDownloader:
 
         return None
 
+    def _download_terabox(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Download files/videos from TeraBox and all supported mirror domains:
+        1. Unified resolver gateway (Cloudflare Worker proxy).
+        2. Direct TeraBox share/list API with optional ndus cookie.
+        3. Fallback public resolver APIs and direct HTML scraping.
+        Supports chunked resume-enabled streaming and live progress reporting.
+        """
+        if not requests:
+            raise DownloaderError("Requests library not available.")
+
+        surl = extract_terabox_surl(url)
+        if not surl:
+            raise DownloaderError("Could not extract TeraBox file ID from link.")
+
+        # Check for user-provided TeraBox cookie (ndus)
+        ndus_cookie = os.getenv("TERABOX_COOKIE", "").strip() or os.getenv("NDUS", "").strip()
+        if not ndus_cookie and getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
+            try:
+                with open(config.COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if "ndus" in line or "terabox" in line:
+                            parts = line.strip().split("\t")
+                            if len(parts) >= 7 and "ndus" in parts[5]:
+                                ndus_cookie = parts[6]
+                                break
+            except Exception:
+                pass
+
+        logger.info(f"Extracting TeraBox link for surl={surl} (has_ndus={bool(ndus_cookie)})...")
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.terabox.app/",
+        }
+        if ndus_cookie:
+            headers["Cookie"] = f"ndus={ndus_cookie}"
+
+        file_info = None
+
+        # Tier 1: Cloudflare Worker Unified Proxy (mode=resolve)
+        proxy_endpoints = [
+            f"https://tbx-proxy.shakir-ansarii075.workers.dev/?mode=resolve&surl={surl}",
+            f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={surl}",
+        ]
+        for p_url in proxy_endpoints:
+            try:
+                r = requests.get(p_url, headers=headers, timeout=20)
+                if r.status_code == 200:
+                    data = r.json()
+                    if isinstance(data, list) and data:
+                        first = data[0]
+                        d = first.get("dlink") or first.get("download_link") or first.get("download_url")
+                        if d:
+                            file_info = {
+                                "file_name": first.get("server_filename") or first.get("file_name") or "terabox_media.mp4",
+                                "dlink": d,
+                                "size": int(first.get("size") or first.get("size_bytes") or 0),
+                                "thumb": (first.get("thumbs") or {}).get("url3") or first.get("thumbnail"),
+                            }
+                            break
+                    elif isinstance(data, dict):
+                        first = (data.get("list") or [None])[0] or data.get("data") or data
+                        if isinstance(first, dict):
+                            d = first.get("dlink") or first.get("download_link") or first.get("download_url")
+                            if d:
+                                file_info = {
+                                    "file_name": first.get("server_filename") or first.get("file_name") or "terabox_media.mp4",
+                                    "dlink": d,
+                                    "size": int(first.get("size") or first.get("size_bytes") or 0),
+                                    "thumb": (first.get("thumbs") or {}).get("url3") or first.get("thumbnail"),
+                                }
+                                break
+            except Exception as e:
+                logger.debug("Proxy resolution failed for %s: %s", p_url, e)
+
+        # Tier 2: Direct TeraBox API with app_id=250528
+        if not file_info:
+            api_hosts = ["www.terabox.app", "www.1024tera.com", "www.terabox.com"]
+            for host in api_hosts:
+                try:
+                    api_url = f"https://{host}/share/list?app_id=250528&shorturl={surl}&root=1"
+                    r = requests.get(api_url, headers=headers, timeout=20)
+                    if r.status_code == 200:
+                        data = r.json()
+                        items = data.get("list") or []
+                        if items and isinstance(items, list):
+                            first = items[0]
+                            if first.get("dlink"):
+                                file_info = {
+                                    "file_name": first.get("server_filename") or "terabox_media.mp4",
+                                    "dlink": first.get("dlink"),
+                                    "size": int(first.get("size", 0)),
+                                    "thumb": (first.get("thumbs") or {}).get("url3"),
+                                }
+                                break
+                except Exception as e:
+                    logger.debug("Direct TeraBox API failed on %s: %s", host, e)
+
+        # Tier 3: Direct Webpage HTML Token Extraction
+        if not file_info:
+            try:
+                web_url = f"https://www.1024terabox.com/sharing/link?surl={surl}"
+                s_resp = requests.get(web_url, headers=headers, timeout=20, allow_redirects=True)
+                html_text = s_resp.text
+                js_token = None
+                logid = None
+                if 'fn%28%22' in html_text and '%22%29' in html_text:
+                    js_token = html_text.split('fn%28%22')[1].split('%22%29')[0]
+                if 'dp-logid=' in html_text and '&' in html_text:
+                    logid = html_text.split('dp-logid=')[1].split('&')[0]
+
+                if js_token and logid:
+                    params = {
+                        "app_id": "250528",
+                        "web": "1",
+                        "channel": "dubox",
+                        "clienttype": "0",
+                        "jsToken": js_token,
+                        "dp-logid": logid,
+                        "page": "1",
+                        "num": "20",
+                        "by": "name",
+                        "order": "asc",
+                        "shorturl": surl,
+                        "root": "1",
+                    }
+                    r2 = requests.get("https://www.terabox.app/share/list", headers=headers, params=params, timeout=20)
+                    if r2.status_code == 200:
+                        data = r2.json()
+                        items = data.get("list") or []
+                        if items:
+                            first = items[0]
+                            if first.get("dlink"):
+                                file_info = {
+                                    "file_name": first.get("server_filename") or "terabox_media.mp4",
+                                    "dlink": first.get("dlink"),
+                                    "size": int(first.get("size", 0)),
+                                    "thumb": (first.get("thumbs") or {}).get("url3"),
+                                }
+            except Exception as e:
+                logger.debug("Direct HTML scraping failed: %s", e)
+
+        if not file_info or not file_info.get("dlink"):
+            raise DownloaderError(
+                "Unable to resolve TeraBox download link. The link may be expired, private, or requiring verification."
+            )
+
+        file_name = file_info["file_name"]
+        dlink = file_info["dlink"]
+        expected_size = file_info.get("size", 0)
+
+        # Sanitize filename
+        safe_name = re.sub(r'[\\/*?:"<>|]', "", file_name).strip() or f"terabox_{surl}.mp4"
+        out_path = temp_dir / safe_name
+
+        # Download stream with progress hooks
+        dl_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "*/*",
+            "Referer": "https://www.terabox.app/",
+            "Connection": "keep-alive",
+        }
+        if ndus_cookie:
+            dl_headers["Cookie"] = f"ndus={ndus_cookie}"
+
+        logger.info(f"Downloading TeraBox file '{safe_name}'...")
+        with requests.get(dlink, headers=dl_headers, stream=True, timeout=60) as resp:
+            resp.raise_for_status()
+            total_bytes = int(resp.headers.get("content-length", 0)) or expected_size
+            downloaded = 0
+            start_t = time.time()
+            last_t = start_t
+            last_bytes = 0
+
+            with open(out_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        cur_t = time.time()
+                        if progress_callback and (cur_t - last_t >= 1.5 or (total_bytes and downloaded >= total_bytes)):
+                            elapsed = cur_t - last_t
+                            speed = (downloaded - last_bytes) / elapsed if elapsed > 0 else 0
+                            pct = (downloaded / total_bytes * 100) if total_bytes > 0 else 0
+                            rem = (total_bytes - downloaded) if total_bytes > 0 else 0
+                            eta = rem / speed if speed > 0 else 0
+                            last_t = cur_t
+                            last_bytes = downloaded
+                            progress_callback({
+                                "percent": pct,
+                                "downloaded": downloaded,
+                                "total": total_bytes,
+                                "speed": speed,
+                                "eta": eta,
+                            })
+
+        filesize_mb = out_path.stat().st_size / (1024 * 1024)
+        is_vid = out_path.suffix.lower() in VIDEO_EXTS
+        is_img = out_path.suffix.lower() in IMAGE_EXTS
+        is_comp = False
+
+        # Attempt compression if video exceeds Telegram 50MB limit
+        if filesize_mb > 50 and is_vid:
+            logger.info("TeraBox video exceeds 50MB (%.1f MB), attempting fast compression...", filesize_mb)
+            compressed = self._compress_video_to_fit(out_path, temp_dir, duration=0)
+            if compressed and compressed.exists():
+                out_path = compressed
+                filesize_mb = out_path.stat().st_size / (1024 * 1024)
+                is_comp = True
+
+        if filesize_mb > 50:
+            raise DownloaderError(
+                f"File is too large for Telegram bot delivery ({filesize_mb:.1f} MB exceeds 50 MB limit)."
+            )
+
+        # Extract crisp thumbnail for video
+        thumb_file = None
+        duration = 0
+        if is_vid:
+            thumb_file = self._extract_video_thumbnail(out_path, temp_dir)
+            try:
+                cmd = [FFMPEG_EXE, "-i", str(out_path)]
+                p = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=10)
+                m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", p.stderr)
+                if m:
+                    h, mn, s = m.groups()
+                    duration = int(h) * 3600 + int(mn) * 60 + float(s)
+            except Exception:
+                pass
+
+        out_type = "video" if is_vid else ("photo" if is_img else "video")
+
+        return {
+            "type": out_type,
+            "file_path": out_path,
+            "file_paths": [out_path],
+            "dir_path": temp_dir,
+            "title": safe_name,
+            "uploader": "TeraBox",
+            "duration": duration,
+            "thumbnail": file_info.get("thumb"),
+            "thumb_file": thumb_file,
+            "is_compressed": is_comp,
+            "filesize_mb": filesize_mb,
+        }
+
     def _download_instagram(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """
         Download Instagram posts (single photos, multi-image carousels, mixed albums, or reels)
@@ -801,6 +1114,22 @@ class MediaDownloader:
         """
         if is_pinterest_url(url):
             url = resolve_pinterest_url(url)
+
+        if is_terabox_url(url):
+            surl = extract_terabox_surl(url)
+            return {
+                "title": f"TeraBox File ({surl})",
+                "uploader": "TeraBox",
+                "thumbnail": None,
+                "duration": 0,
+                "qualities": [
+                    {
+                        "height": 0,
+                        "label": "📥 Download TeraBox File",
+                        "code": "res_best",
+                    }
+                ],
+            }
 
         def _probe():
             is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
@@ -1190,7 +1519,11 @@ class MediaDownloader:
             url = resolve_pinterest_url(url)
 
         try:
-            # 1. Specialized Twitter / X Downloader (instant direct photo/video/album extraction)
+            # 1. Specialized TeraBox Downloader
+            if is_terabox_url(url):
+                return await asyncio.to_thread(self._download_terabox, url, temp_dir, progress_callback)
+
+            # 2. Specialized Twitter / X Downloader (instant direct photo/video/album extraction)
             if is_twitter_url(url):
                 try:
                     tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)

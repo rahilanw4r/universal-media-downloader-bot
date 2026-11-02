@@ -126,8 +126,10 @@ def get_cookies_status() -> Dict[str, Any]:
             "total_cookies": 0,
             "youtube_cookies": 0,
             "instagram_cookies": 0,
+            "terabox_cookies": 0,
             "has_login": False,
             "has_ig_login": False,
+            "has_tb_login": False,
         }
 
     try:
@@ -135,8 +137,10 @@ def get_cookies_status() -> Dict[str, Any]:
         lines = 0
         yt_count = 0
         ig_count = 0
+        tb_count = 0
         has_login = False
         has_ig_login = False
+        has_tb_login = bool(os.getenv("TERABOX_COOKIE") or os.getenv("NDUS"))
         with open(COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 line = line.strip()
@@ -151,9 +155,14 @@ def get_cookies_status() -> Dict[str, Any]:
                     ig_count += 1
                     if any(k in line for k in ("sessionid", "ds_user_id")):
                         has_ig_login = True
+                if "terabox" in line or "1024tera" in line or "ndus" in line:
+                    tb_count += 1
+                    if "ndus" in line:
+                        has_tb_login = True
 
         yt_state = "logged in" if has_login else "guest"
         ig_state = "logged in" if has_ig_login else ("present" if ig_count > 0 else "none")
+        tb_state = "logged in" if has_tb_login else ("present" if tb_count > 0 else "bypass")
 
         return {
             "loaded": True,
@@ -162,9 +171,11 @@ def get_cookies_status() -> Dict[str, Any]:
             "total_cookies": lines,
             "youtube_cookies": yt_count,
             "instagram_cookies": ig_count,
+            "terabox_cookies": tb_count,
             "has_login": has_login,
             "has_ig_login": has_ig_login,
-            "message": f"Active ({yt_count} YouTube [{yt_state}], {ig_count} Instagram [{ig_state}]).",
+            "has_tb_login": has_tb_login,
+            "message": f"Active ({yt_count} YouTube [{yt_state}], {ig_count} Instagram [{ig_state}], {tb_count} TeraBox [{tb_state}]).",
         }
     except Exception as e:
         return {
@@ -174,8 +185,10 @@ def get_cookies_status() -> Dict[str, Any]:
             "total_cookies": 0,
             "youtube_cookies": 0,
             "instagram_cookies": 0,
+            "terabox_cookies": 0,
             "has_login": False,
             "has_ig_login": False,
+            "has_tb_login": False,
         }
 
 
