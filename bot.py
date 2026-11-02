@@ -80,6 +80,37 @@ def cleanup_expired_sessions() -> None:
         url_sessions.pop(sid, None)
 
 
+# Active background download tasks per user / chat ID
+user_active_tasks: Dict[int, List[asyncio.Task]] = {}
+
+
+def register_user_task(user_id: int, task: asyncio.Task) -> None:
+    """Register an active async task for a user so /stop can cancel it."""
+    if user_id not in user_active_tasks:
+        user_active_tasks[user_id] = []
+    user_active_tasks[user_id].append(task)
+
+    def _cleanup(_):
+        tasks = user_active_tasks.get(user_id, [])
+        if task in tasks:
+            tasks.remove(task)
+        if not tasks:
+            user_active_tasks.pop(user_id, None)
+
+    task.add_done_callback(_cleanup)
+
+
+def cancel_user_tasks(user_id: int) -> int:
+    """Cancel all active tasks for a user, returning count of tasks cancelled."""
+    tasks = user_active_tasks.pop(user_id, [])
+    cancelled = 0
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+            cancelled += 1
+    return cancelled
+
+
 class ProgressTracker:
     """Handles rate-limited message editing for live download progress."""
 
@@ -219,6 +250,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <b>Paste any link</b> — Auto-download media\n"
         f"• <code>/mode</code> — Toggle Instant vs Quality Picker\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
+        f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
         f"• <code>/help</code> — Full guide & instructions\n"
@@ -285,6 +317,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/start</code> — Greeting, status & quick buttons\n"
         "• <code>/mode</code> — Switch Instant vs Quality Picker\n"
         "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
+        "• <code>/stop</code> — Stop active downloads & clear sessions\n"
         "• <code>/ping</code> — Check server latency & health\n"
         "• <code>/stats</code> — User count & download analytics\n"
         "• <code>/admin</code> — Contact developer directly\n"
@@ -524,6 +557,10 @@ async def execute_download(
     resolution: Optional[int] = None,
 ) -> None:
     """Perform download with live progress bar and deliver media to Telegram with concurrency protection."""
+    cur_task = asyncio.current_task()
+    if cur_task:
+        register_user_task(chat_id, cur_task)
+
     sem = get_download_semaphore()
     if sem.locked():
         try:
@@ -774,6 +811,13 @@ async def execute_download(
                 except Exception:
                     pass
 
+            except asyncio.CancelledError:
+                logger.info("Download task for chat %s was cancelled via /stop.", chat_id)
+                try:
+                    await status_msg.edit_text("🛑 <b>Download Stopped:</b> Task was cancelled.", parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
+                raise
             except DownloaderError as e:
                 logger.error(f"Download error: {e}")
                 raw_err = str(e)
@@ -888,6 +932,13 @@ async def execute_download(
                 except Exception:
                     pass
 
+            except asyncio.CancelledError:
+                logger.info("Download task for chat %s was cancelled via /stop.", chat_id)
+                try:
+                    await status_msg.edit_text("🛑 <b>Download Stopped:</b> Task was cancelled.", parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
+                raise
             except DownloaderError as e:
                 logger.error(f"Audio download error: {e}")
                 await context.bot.send_message(
@@ -1241,6 +1292,52 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stop and /cancel - Stop current download tasks and clear pending sessions."""
+    if not await check_user_auth(update, context):
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    # 1. Cancel active background download tasks
+    cancelled = cancel_user_tasks(user.id)
+    if chat_id != user.id:
+        cancelled += cancel_user_tasks(chat_id)
+
+    # 2. Clear any pending quality picker sessions
+    cleared_sessions = 0
+    to_remove = [sid for sid, d in url_sessions.items() if d.get("user_id") in (user.id, chat_id)]
+    for sid in to_remove:
+        url_sessions.pop(sid, None)
+        cleared_sessions += 1
+
+    if cancelled > 0 or cleared_sessions > 0:
+        text = (
+            "🛑 <b>Downloads Stopped</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"• ⏹️ <b>Active Tasks Cancelled:</b> <code>{cancelled}</code>\n"
+            f"• 🗑️ <b>Pending Sessions Cleared:</b> <code>{cleared_sessions}</code>\n\n"
+            "✅ All current activities have been stopped successfully.\n"
+            "💡 <i>Send any media link or /start whenever you are ready!</i>"
+        )
+    else:
+        text = (
+            "🛑 <b>No Active Downloads</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "You have no downloads running or pending right now.\n\n"
+            "💡 <i>Send any video, photo, or music link to begin!</i>"
+        )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
+            InlineKeyboardButton("📖 Help", callback_data="open_help"),
+        ]
+    ])
+    await update.effective_message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /ping command: check bot response latency and server status."""
     if not await check_user_auth(update, context):
@@ -1412,6 +1509,7 @@ async def post_init(application: Application) -> None:
         BotCommand("start", "Start the bot & main menu"),
         BotCommand("mode", "Toggle Instant vs Quality Picker"),
         BotCommand("mp3", "Extract MP3 audio (192kbps)"),
+        BotCommand("stop", "Stop active downloads & clear sessions"),
         BotCommand("ping", "Check bot latency & server status"),
         BotCommand("stats", "View download analytics"),
         BotCommand("help", "User manual & instructions"),
@@ -1481,6 +1579,8 @@ def main():
     app.add_handler(CommandHandler("about", about_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("analytics", stats_command))
+    app.add_handler(CommandHandler("stop", stop_command))
+    app.add_handler(CommandHandler("cancel", stop_command))
     app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("clean", clean_command))
     app.add_handler(CommandHandler("clearcache", clean_command))

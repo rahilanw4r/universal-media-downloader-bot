@@ -157,6 +157,7 @@ class TestDownloader(unittest.TestCase):
             import bot
             self.assertTrue(callable(bot.ping_command))
             self.assertTrue(callable(bot.clean_command))
+            self.assertTrue(callable(bot.stop_command))
             self.assertTrue(callable(bot.post_init))
         except ModuleNotFoundError as e:
             if "telegram" in str(e):
