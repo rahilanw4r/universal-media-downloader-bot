@@ -6,6 +6,7 @@ from downloader import (
     is_pinterest_url,
     resolve_pinterest_url,
     is_twitter_url,
+    is_instagram_url,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -34,8 +35,10 @@ class TestDownloader(unittest.TestCase):
 
     def test_detect_platform(self):
         self.assertEqual(detect_platform("https://www.instagram.com/reel/abc123/"), "Instagram")
+        self.assertEqual(detect_platform("https://www.instagram.com/p/abc123/"), "Instagram")
         self.assertEqual(detect_platform("https://youtu.be/abc123"), "YouTube")
         self.assertEqual(detect_platform("https://x.com/user/status/123"), "X (Twitter)")
+        self.assertEqual(detect_platform("https://twitter.com/user/status/123"), "X (Twitter)")
         self.assertEqual(detect_platform("https://www.tiktok.com/@user/video/123"), "TikTok")
         self.assertEqual(detect_platform("https://pin.it/abc123"), "Pinterest")
         self.assertEqual(detect_platform("https://www.reddit.com/r/videos/comments/123/"), "Reddit")
@@ -53,6 +56,11 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_twitter_url("https://x.com/NASA/status/1783547844005695627"))
         self.assertTrue(is_twitter_url("https://twitter.com/user/status/123"))
         self.assertFalse(is_twitter_url("https://instagram.com/p/123"))
+
+        self.assertTrue(is_instagram_url("https://www.instagram.com/p/C-123456/"))
+        self.assertTrue(is_instagram_url("https://instagram.com/reel/C-123456/"))
+        self.assertTrue(is_instagram_url("https://instagr.am/p/C-123456/"))
+        self.assertFalse(is_instagram_url("https://x.com/user/status/123"))
 
     def test_media_extensions(self):
         self.assertIn(".mp4", VIDEO_EXTS)
@@ -116,6 +124,28 @@ class TestDownloader(unittest.TestCase):
 
         pub_dash = analytics.format_public_dashboard()
         self.assertIn("Universal Media Downloader", pub_dash)
+
+        uptime_str = analytics.format_uptime()
+        self.assertTrue(bool(uptime_str))
+        self.assertTrue(any(unit in uptime_str for unit in ("s", "m", "h", "d")))
+
+    def test_cookies_management(self):
+        # Test cleaning raw cookie content
+        raw_cookie = ".youtube.com\tTRUE\t/\tTRUE\t1799999999\tLOGIN_INFO\tabc123"
+        cleaned = config._clean_cookie_content(raw_cookie)
+        self.assertTrue(cleaned.startswith("# Netscape HTTP Cookie File"))
+        self.assertIn("LOGIN_INFO", cleaned)
+
+        # Test base64 cookie normalization
+        import base64
+        b64 = base64.b64encode(raw_cookie.encode("utf-8")).decode("utf-8")
+        cleaned_b64 = config._clean_cookie_content(b64)
+        self.assertIn("LOGIN_INFO", cleaned_b64)
+
+        # Test cookie status diagnostics
+        status = config.get_cookies_status()
+        self.assertIn("loaded", status)
+        self.assertIn("youtube_cookies", status)
 
 
 if __name__ == "__main__":

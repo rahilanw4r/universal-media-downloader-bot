@@ -55,6 +55,18 @@ logger = logging.getLogger(__name__)
 # Initialize Downloader
 downloader = MediaDownloader()
 
+# Concurrency limiter to protect host from CPU/memory exhaustion
+MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
+download_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def get_download_semaphore() -> asyncio.Semaphore:
+    """Lazy initialize download semaphore on active event loop."""
+    global download_semaphore
+    if download_semaphore is None:
+        download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    return download_semaphore
+
 # Active URL sessions for inline quality buttons and quick actions
 url_sessions: Dict[str, Dict[str, Any]] = {}
 
@@ -487,247 +499,269 @@ async def execute_download(
     context: ContextTypes.DEFAULT_TYPE,
     resolution: Optional[int] = None,
 ) -> None:
-    """Perform download with live progress bar and deliver media to Telegram."""
-    loop = asyncio.get_running_loop()
-    tracker = ProgressTracker(status_msg, loop, platform)
-
-    if action == "media":
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-
+    """Perform download with live progress bar and deliver media to Telegram with concurrency protection."""
+    sem = get_download_semaphore()
+    if sem.locked():
         try:
-            result = await downloader.download_media(
-                url=target_url,
-                resolution=resolution,
-                progress_callback=tracker.on_progress,
+            await status_msg.edit_text(
+                "⏳ <b>Queued...</b> Server is processing other downloads. Your task will start shortly!",
+                parse_mode=ParseMode.HTML,
             )
-            media_type = result.get("type", "video")
-            dir_path = result.get("dir_path")
-            title = result.get("title", "Media")
-            duration = result.get("duration", 0)
-            filesize_mb = result.get("filesize_mb", 0)
-            bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else ""
+        except Exception:
+            pass
 
-            # Save session for quick post-download action buttons
-            vid_session_id = uuid.uuid4().hex[:8]
-            url_sessions[vid_session_id] = {
-                "url": target_url,
-                "platform": platform,
-                "time": time.time(),
-                "user_id": chat_id,
-            }
-            cleanup_expired_sessions()
+    async with sem:
+        loop = asyncio.get_running_loop()
+        tracker = ProgressTracker(status_msg, loop, platform)
 
-            # 1. Single Photo delivery
-            if media_type == "photo":
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                file_path = result["file_path"]
-                caption = (
-                    f"🖼️ <b>{html.escape(title[:100])}</b>\n"
-                    f"📁 {html.escape(platform)} • 📦 {filesize_mb:.1f} MB"
+        if action == "media":
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+
+            try:
+                result = await downloader.download_media(
+                    url=target_url,
+                    resolution=resolution,
+                    progress_callback=tracker.on_progress,
                 )
-                if bot_handle:
-                    caption += f"\n🤖 {html.escape(bot_handle)}"
+                media_type = result.get("type", "video")
+                dir_path = result.get("dir_path")
+                title = result.get("title", "Media")
+                duration = result.get("duration", 0)
+                filesize_mb = result.get("filesize_mb", 0)
+                bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else ""
 
-                with open(file_path, "rb") as f:
-                    try:
-                        await context.bot.send_photo(
-                            chat_id=chat_id,
-                            photo=f,
-                            caption=caption,
-                            parse_mode=ParseMode.HTML,
-                            read_timeout=300,
-                            write_timeout=300,
-                        )
-                    except Exception as e:
-                        if "parse entities" in str(e).lower():
-                            f.seek(0)
+                # Save session for quick post-download action buttons
+                vid_session_id = uuid.uuid4().hex[:8]
+                url_sessions[vid_session_id] = {
+                    "url": target_url,
+                    "platform": platform,
+                    "time": time.time(),
+                    "user_id": chat_id,
+                }
+                cleanup_expired_sessions()
+
+                # 1. Single Photo delivery
+                if media_type == "photo":
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                    file_path = result["file_path"]
+                    caption = (
+                        f"🖼️ <b>{html.escape(title[:100])}</b>\n"
+                        f"📁 {html.escape(platform)} • 📦 {filesize_mb:.1f} MB"
+                    )
+                    if bot_handle:
+                        caption += f"\n🤖 {html.escape(bot_handle)}"
+
+                    with open(file_path, "rb") as f:
+                        try:
                             await context.bot.send_photo(
                                 chat_id=chat_id,
                                 photo=f,
-                                caption=f"🖼️ {title[:100]}\n📁 {platform} • 📦 {filesize_mb:.1f} MB",
+                                caption=caption,
+                                parse_mode=ParseMode.HTML,
                                 read_timeout=300,
                                 write_timeout=300,
                             )
-                        else:
-                            raise
-                analytics.track_download(chat_id, platform, "photo")
+                        except Exception as e:
+                            if "parse entities" in str(e).lower():
+                                f.seek(0)
+                                await context.bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo=f,
+                                    caption=f"🖼️ {title[:100]}\n📁 {platform} • 📦 {filesize_mb:.1f} MB",
+                                    read_timeout=300,
+                                    write_timeout=300,
+                                )
+                            else:
+                                raise
+                    analytics.track_download(chat_id, platform, "photo")
 
-            # 2. Multi-item album / carousel delivery
-            elif media_type == "album":
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
-                file_paths: List[Path] = result.get("file_paths", [])
-                caption = (
-                    f"📸 <b>{html.escape(title[:100])}</b>\n"
-                    f"📁 {html.escape(platform)} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
-                )
-                if bot_handle:
-                    caption += f"\n🤖 {html.escape(bot_handle)}"
+                # 2. Multi-item album / carousel delivery
+                elif media_type == "album":
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                    file_paths: List[Path] = result.get("file_paths", [])
+                    caption = (
+                        f"📸 <b>{html.escape(title[:100])}</b>\n"
+                        f"📁 {html.escape(platform)} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
+                    )
+                    if bot_handle:
+                        caption += f"\n🤖 {html.escape(bot_handle)}"
 
-                media = []
-                open_files = []
-                try:
-                    for idx, fp in enumerate(file_paths[:10]):  # Telegram maximum is 10 items
-                        fh = open(fp, "rb")
-                        open_files.append(fh)
-                        item_caption = caption if idx == 0 else None
-                        if fp.suffix.lower() in VIDEO_EXTS:
-                            media.append(InputMediaVideo(media=fh, caption=item_caption, parse_mode=ParseMode.HTML))
-                        else:
-                            media.append(InputMediaPhoto(media=fh, caption=item_caption, parse_mode=ParseMode.HTML))
-
+                    media = []
+                    open_files = []
                     try:
-                        await context.bot.send_media_group(
-                            chat_id=chat_id,
-                            media=media,
-                            read_timeout=300,
-                            write_timeout=300,
-                        )
-                    except Exception as e:
-                        if "parse entities" in str(e).lower():
-                            for item in media:
-                                item.parse_mode = None
-                                if item.caption:
-                                    item.caption = f"📸 {title[:100]}\n📁 {platform} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
-                                if hasattr(item.media, "seek"):
-                                    item.media.seek(0)
+                        for idx, fp in enumerate(file_paths[:10]):  # Telegram maximum is 10 items
+                            fh = open(fp, "rb")
+                            open_files.append(fh)
+                            item_caption = caption if idx == 0 else None
+                            if fp.suffix.lower() in VIDEO_EXTS:
+                                media.append(InputMediaVideo(media=fh, caption=item_caption, parse_mode=ParseMode.HTML))
+                            else:
+                                media.append(InputMediaPhoto(media=fh, caption=item_caption, parse_mode=ParseMode.HTML))
+
+                        try:
                             await context.bot.send_media_group(
                                 chat_id=chat_id,
                                 media=media,
                                 read_timeout=300,
                                 write_timeout=300,
                             )
-                        else:
-                            raise
-                    analytics.track_download(chat_id, platform, "album")
-                finally:
-                    for fh in open_files:
-                        fh.close()
+                        except Exception as e:
+                            if "parse entities" in str(e).lower():
+                                for item in media:
+                                    item.parse_mode = None
+                                    if item.caption:
+                                        item.caption = f"📸 {title[:100]}\n📁 {platform} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
+                                    if hasattr(item.media, "seek"):
+                                        item.media.seek(0)
+                                await context.bot.send_media_group(
+                                    chat_id=chat_id,
+                                    media=media,
+                                    read_timeout=300,
+                                    write_timeout=300,
+                                )
+                            else:
+                                raise
+                        analytics.track_download(chat_id, platform, "album")
+                    finally:
+                        for fh in open_files:
+                            fh.close()
 
-            # 3. Single Video delivery
-            else:
-                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
-                file_path = result["file_path"]
+                # 3. Single Video delivery
+                else:
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+                    file_path = result["file_path"]
+                    thumb_file = result.get("thumb_file")
+                    width = result.get("width")
+                    height = result.get("height")
+                    is_comp = result.get("is_compressed", False)
 
-                dur_str = f" • ⏱️ {int(duration)}s" if duration else ""
-                res_str = f" ({resolution}p)" if resolution else ""
-                caption = (
-                    f"🎬 <b>{html.escape(title[:100])}</b>\n"
-                    f"📁 {html.escape(platform)}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}"
+                    dur_str = f" • ⏱️ {int(duration)}s" if duration else ""
+                    res_str = f" ({resolution}p)" if resolution else ""
+                    comp_str = "\n⚡ <i>Auto-compressed to fit Telegram 50MB limit</i>" if is_comp else ""
+
+                    caption = (
+                        f"🎬 <b>{html.escape(title[:100])}</b>\n"
+                        f"📁 {html.escape(platform)}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}{comp_str}"
+                    )
+                    if bot_handle:
+                        caption += f"\n🤖 {html.escape(bot_handle)}"
+
+                    # Quick action buttons: One-tap MP3 extraction or mode switch
+                    post_keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
+                            InlineKeyboardButton("⚡ Mode", callback_data="toggle_mode"),
+                        ]
+                    ])
+
+                    thumb_handle = None
+                    if thumb_file and Path(thumb_file).exists():
+                        try:
+                            thumb_handle = open(thumb_file, "rb")
+                        except Exception:
+                            thumb_handle = None
+
+                    try:
+                        with open(file_path, "rb") as f:
+                            try:
+                                await context.bot.send_video(
+                                    chat_id=chat_id,
+                                    video=f,
+                                    thumbnail=thumb_handle,
+                                    duration=int(duration) if duration else None,
+                                    width=width,
+                                    height=height,
+                                    caption=caption,
+                                    parse_mode=ParseMode.HTML,
+                                    supports_streaming=True,
+                                    reply_markup=post_keyboard,
+                                    read_timeout=300,
+                                    write_timeout=300,
+                                )
+                            except Exception as e:
+                                if "parse entities" in str(e).lower():
+                                    f.seek(0)
+                                    if thumb_handle and hasattr(thumb_handle, "seek"):
+                                        thumb_handle.seek(0)
+                                    await context.bot.send_video(
+                                        chat_id=chat_id,
+                                        video=f,
+                                        thumbnail=thumb_handle,
+                                        duration=int(duration) if duration else None,
+                                        width=width,
+                                        height=height,
+                                        caption=f"🎬 {title[:100]}\n📁 {platform}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}",
+                                        supports_streaming=True,
+                                        reply_markup=post_keyboard,
+                                        read_timeout=300,
+                                        write_timeout=300,
+                                    )
+                                else:
+                                    raise
+                    finally:
+                        if thumb_handle:
+                            thumb_handle.close()
+
+                    analytics.track_download(chat_id, platform, "video")
+
+                # Cleanup temp files
+                if dir_path:
+                    downloader.cleanup(dir_path)
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
+
+            except DownloaderError as e:
+                logger.error(f"Download error: {e}")
+                error_text = (
+                    f"❌ <b>Download Failed:</b>\n{html.escape(str(e))}\n\n"
+                    f"💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
                 )
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=error_text,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.exception("Unexpected error sending media")
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"❌ <b>Error uploading media:</b> {html.escape(str(e))}\n\n"
+                        f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
+                    ),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+
+        elif action == "audio":
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+
+            try:
+                result = await downloader.download_audio(
+                    url=target_url,
+                    progress_callback=tracker.on_progress,
+                )
+                file_path = result["file_path"]
+                thumb_file = result.get("thumb_file")
+                dir_path = result["dir_path"]
+                title = result.get("title", "Audio")
+                uploader = result.get("uploader", "Unknown")
+                duration = result.get("duration", 0)
+                filesize_mb = result.get("filesize_mb", 0)
+                bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else ""
+
+                thumb_handle = None
+                if thumb_file and Path(thumb_file).exists():
+                    thumb_handle = open(thumb_file, "rb")
+
+                caption = f"🎵 <b>{html.escape(title[:100])}</b> (192kbps • {filesize_mb:.1f} MB)"
                 if bot_handle:
                     caption += f"\n🤖 {html.escape(bot_handle)}"
 
-                # Quick action buttons: One-tap MP3 extraction or mode switch
-                post_keyboard = InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
-                        InlineKeyboardButton("⚡ Mode", callback_data="toggle_mode"),
-                    ]
-                ])
-
-                with open(file_path, "rb") as f:
-                    try:
-                        await context.bot.send_video(
-                            chat_id=chat_id,
-                            video=f,
-                            caption=caption,
-                            parse_mode=ParseMode.HTML,
-                            supports_streaming=True,
-                            reply_markup=post_keyboard,
-                            read_timeout=300,
-                            write_timeout=300,
-                        )
-                    except Exception as e:
-                        if "parse entities" in str(e).lower():
-                            f.seek(0)
-                            await context.bot.send_video(
-                                chat_id=chat_id,
-                                video=f,
-                                caption=f"🎬 {title[:100]}\n📁 {platform}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}",
-                                supports_streaming=True,
-                                reply_markup=post_keyboard,
-                                read_timeout=300,
-                                write_timeout=300,
-                            )
-                        else:
-                            raise
-                analytics.track_download(chat_id, platform, "video")
-
-            # Cleanup temp files
-            if dir_path:
-                downloader.cleanup(dir_path)
-            try:
-                await status_msg.delete()
-            except Exception:
-                pass
-
-        except DownloaderError as e:
-            logger.error(f"Download error: {e}")
-            error_text = (
-                f"❌ <b>Download Failed:</b>\n{html.escape(str(e))}\n\n"
-                f"💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
-            )
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=error_text,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except Exception as e:
-            logger.exception("Unexpected error sending media")
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"❌ <b>Error uploading media:</b> {html.escape(str(e))}\n\n"
-                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
-                ),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-
-    elif action == "audio":
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
-
-        try:
-            result = await downloader.download_audio(
-                url=target_url,
-                progress_callback=tracker.on_progress,
-            )
-            file_path = result["file_path"]
-            thumb_file = result.get("thumb_file")
-            dir_path = result["dir_path"]
-            title = result.get("title", "Audio")
-            uploader = result.get("uploader", "Unknown")
-            duration = result.get("duration", 0)
-            filesize_mb = result.get("filesize_mb", 0)
-            bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else ""
-
-            thumb_handle = None
-            if thumb_file and Path(thumb_file).exists():
-                thumb_handle = open(thumb_file, "rb")
-
-            caption = f"🎵 <b>{html.escape(title[:100])}</b> (192kbps • {filesize_mb:.1f} MB)"
-            if bot_handle:
-                caption += f"\n🤖 {html.escape(bot_handle)}"
-
-            try:
-                with open(file_path, "rb") as f:
-                    await context.bot.send_audio(
-                        chat_id=chat_id,
-                        audio=f,
-                        thumbnail=thumb_handle,
-                        title=title,
-                        performer=uploader,
-                        duration=duration,
-                        caption=caption,
-                        parse_mode=ParseMode.HTML,
-                        read_timeout=300,
-                        write_timeout=300,
-                    )
-            except Exception as e:
-                if "parse entities" in str(e).lower():
-                    if thumb_handle and hasattr(thumb_handle, "seek"):
-                        thumb_handle.seek(0)
+                try:
                     with open(file_path, "rb") as f:
                         await context.bot.send_audio(
                             chat_id=chat_id,
@@ -736,48 +770,65 @@ async def execute_download(
                             title=title,
                             performer=uploader,
                             duration=duration,
-                            caption=f"🎵 {title[:100]} (192kbps • {filesize_mb:.1f} MB)",
+                            caption=caption,
+                            parse_mode=ParseMode.HTML,
                             read_timeout=300,
                             write_timeout=300,
                         )
-                else:
-                    raise
-            finally:
-                if thumb_handle:
-                    thumb_handle.close()
+                except Exception as e:
+                    if "parse entities" in str(e).lower():
+                        if thumb_handle and hasattr(thumb_handle, "seek"):
+                            thumb_handle.seek(0)
+                        with open(file_path, "rb") as f:
+                            await context.bot.send_audio(
+                                chat_id=chat_id,
+                                audio=f,
+                                thumbnail=thumb_handle,
+                                title=title,
+                                performer=uploader,
+                                duration=duration,
+                                caption=f"🎵 {title[:100]} (192kbps • {filesize_mb:.1f} MB)",
+                                read_timeout=300,
+                                write_timeout=300,
+                            )
+                    else:
+                        raise
+                finally:
+                    if thumb_handle:
+                        thumb_handle.close()
 
-            analytics.track_download(chat_id, platform, "audio")
+                analytics.track_download(chat_id, platform, "audio")
 
-            # Cleanup temp files
-            if dir_path:
-                downloader.cleanup(dir_path)
-            try:
-                await status_msg.delete()
-            except Exception:
-                pass
+                # Cleanup temp files
+                if dir_path:
+                    downloader.cleanup(dir_path)
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
 
-        except DownloaderError as e:
-            logger.error(f"Audio download error: {e}")
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"❌ <b>Audio Extraction Failed:</b>\n{html.escape(str(e))}\n\n"
-                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
-                ),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except Exception as e:
-            logger.exception("Unexpected error sending audio")
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"❌ <b>Error uploading audio:</b> {html.escape(str(e))}\n\n"
-                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
-                ),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+            except DownloaderError as e:
+                logger.error(f"Audio download error: {e}")
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"❌ <b>Audio Extraction Failed:</b>\n{html.escape(str(e))}\n\n"
+                        f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
+                    ),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.exception("Unexpected error sending audio")
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"❌ <b>Error uploading audio:</b> {html.escape(str(e))}\n\n"
+                        f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
+                    ),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1108,6 +1159,91 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /cookies - Admin diagnostic command to check YouTube cookies status."""
+    if not await check_user_auth(update, context):
+        return
+
+    user = update.effective_user
+    if not config.is_admin(user):
+        await update.message.reply_text(
+            "⛔ <b>Access Denied:</b> This command is restricted to the bot admin.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    st = config.get_cookies_status()
+    loaded_icon = "✅ Active" if st.get("loaded") else "⚠️ Inactive / Missing"
+    login_icon = "🔑 Authenticated Account" if st.get("has_login") else "👤 Guest / Anonymous Session"
+
+    msg = (
+        "🍪 <b>YouTube & Platform Cookies Diagnostics</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"• <b>Status:</b> {loaded_icon}\n"
+        f"• <b>Details:</b> {html.escape(st.get('message', ''))}\n"
+        f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
+        f"• <b>YouTube Cookies:</b> <code>{st.get('youtube_cookies', 0)}</code> ({login_icon})\n"
+        f"• <b>Path:</b> <code>{html.escape(str(st.get('path') or 'None'))}</code>\n\n"
+        "⚡ <b>Bypass Engine:</b> Even without cookies, YouTube downloads automatically fallback to mobile client bypass (iOS/Android)!\n\n"
+        "📤 <b>How to Update Cookies:</b>\n"
+        "1. Export your cookies using the <b>'Get cookies.txt LOCALLY'</b> browser extension.\n"
+        "2. Send or forward the <code>cookies.txt</code> file directly to this chat.\n"
+        "3. The bot will validate and activate it immediately with zero downtime!"
+    )
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Allow admin to send cookies.txt directly to the bot to update authentication."""
+    message = update.message
+    if not message or not message.document:
+        return
+
+    user = update.effective_user
+    if not config.is_admin(user):
+        return
+
+    doc = message.document
+    filename = (doc.file_name or "").lower()
+
+    if not (filename.endswith(".txt") or "cookie" in filename):
+        return
+
+    status_msg = await message.reply_text("⏳ <i>Processing cookies document...</i>", parse_mode=ParseMode.HTML)
+
+    try:
+        file = await doc.get_file()
+        file_bytes = await file.download_as_bytearray()
+        content = file_bytes.decode("utf-8", errors="ignore")
+
+        if not ("\t" in content or "youtube" in content or "Netscape" in content):
+            await status_msg.edit_text(
+                "❌ <b>Invalid Cookie File:</b> The file does not look like a valid Netscape cookie file.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        success = config.save_cookies_file(content)
+        if success:
+            st = config.get_cookies_status()
+            await status_msg.edit_text(
+                f"✅ <b>Cookies Updated Successfully!</b>\n\n"
+                f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
+                f"• <b>YouTube Cookies:</b> <code>{st.get('youtube_cookies', 0)}</code>\n"
+                f"• <b>Saved to:</b> <code>{html.escape(str(st.get('path')))}</code>\n\n"
+                f"🎉 The bot is now using your updated cookies for all downloads!",
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await status_msg.edit_text("❌ Failed to save cookies file.", parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.exception("Error updating cookies from document")
+        await status_msg.edit_text(
+            f"❌ <b>Error processing cookies:</b> {html.escape(str(e))}",
+            parse_mode=ParseMode.HTML,
+        )
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     """Simple HTTP handler to satisfy cloud health checks and enable keep-alive pings."""
 
@@ -1164,11 +1300,16 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("analytics", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("cookies", cookies_command))
+    app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
 
     # Buttons callback
     app.add_handler(CallbackQueryHandler(button_callback_handler))
+
+    # Admin document handler (e.g. cookies.txt file uploads)
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, admin_document_handler))
 
     # All text messages with URLs
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))

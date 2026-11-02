@@ -8,10 +8,27 @@ import logging
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
-from PIL import Image
-import imageio_ffmpeg
-import yt_dlp
-import requests
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
+try:
+    import imageio_ffmpeg
+    FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+except Exception:
+    FFMPEG_EXE = shutil.which("ffmpeg") or "ffmpeg"
+
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 import config
 
@@ -21,13 +38,6 @@ except ImportError:
     Pinterest = None
 
 logger = logging.getLogger(__name__)
-
-# Resolve embedded ffmpeg binary
-try:
-    FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
-except Exception as e:
-    logger.warning(f"Could not resolve imageio_ffmpeg binary: {e}")
-    FFMPEG_EXE = "ffmpeg"
 
 # Regex pattern to identify URLs in text
 URL_REGEX = re.compile(
@@ -101,6 +111,12 @@ def is_twitter_url(url: str) -> bool:
     return "twitter.com" in url_lower or "x.com" in url_lower
 
 
+def is_instagram_url(url: str) -> bool:
+    """Check if URL belongs to Instagram."""
+    url_lower = url.lower()
+    return "instagram.com" in url_lower or "instagr.am" in url_lower
+
+
 def render_progress_bar(percent: float, width: int = 10) -> str:
     """Generate an ASCII progress bar, e.g. [██████░░░░] 60%."""
     percent = max(0.0, min(100.0, percent))
@@ -124,8 +140,12 @@ class MediaDownloader:
             self.download_dir = download_dir
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_ydl_base_opts(self) -> Dict[str, Any]:
-        """Base options for yt-dlp with anti-bot bypass configuration."""
+    def _get_ydl_base_opts(
+        self,
+        use_cookies: bool = True,
+        youtube_clients: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Base options for yt-dlp with anti-bot bypass configuration and fast streaming."""
         opts = {
             "quiet": True,
             "no_warnings": True,
@@ -133,13 +153,55 @@ class MediaDownloader:
             "windowsfilenames": True,
             "trim_file_name": 50,
             "ffmpeg_location": FFMPEG_EXE,
-            # Let yt-dlp select its currently supported YouTube player clients.
-            # Hard-coding older clients and a spoofed browser User-Agent can trigger
-            # YouTube's bot checks or create inconsistent client fingerprints.
+            "postprocessor_args": {
+                "ffmpeg": ["-movflags", "+faststart"],
+            },
         }
-        if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
-            opts["cookiefile"] = str(config.COOKIES_FILE)
+
+        # Check for valid cookies file
+        cookie_file = getattr(config, "COOKIES_FILE", None)
+        has_cookies = False
+        if use_cookies and cookie_file and Path(cookie_file).exists() and Path(cookie_file).stat().st_size > 10:
+            opts["cookiefile"] = str(cookie_file)
+            has_cookies = True
+
+        # YouTube client alignment:
+        # If desktop cookies are present, use web clients matching the desktop session.
+        # If no cookies or fallback requested, use ios/android mobile clients which bypass bot gates.
+        if youtube_clients:
+            clients = youtube_clients
+        elif has_cookies:
+            clients = ["web", "mweb"]
+        else:
+            clients = ["ios", "android", "mweb"]
+
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": clients,
+                "player_skip": ["webpage", "configs"],
+            }
+        }
         return opts
+
+    def _extract_video_thumbnail(self, video_path: Path, temp_dir: Path) -> Optional[Path]:
+        """Extract a crisp preview frame from video using FFmpeg for Telegram."""
+        thumb_path = temp_dir / f"thumb_{video_path.stem}.jpg"
+        try:
+            cmd = [
+                FFMPEG_EXE, "-y",
+                "-ss", "00:00:01",
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-vf", "scale='min(640,iw)':-2",
+                "-q:v", "2",
+                str(thumb_path),
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
+            if thumb_path.exists() and thumb_path.stat().st_size > 0:
+                return thumb_path
+        except Exception:
+            pass
+        return None
 
     def _download_pinterest(self, url: str, temp_dir: Path) -> Dict[str, Any]:
         """Download Pinterest image or video pin using direct extraction or pinterest-downloader."""
@@ -227,35 +289,122 @@ class MediaDownloader:
         }
 
     def _download_twitter(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
-        """Download Twitter/X post photos or videos via fxTwitter API."""
+        """Download Twitter/X post photos or videos via fxTwitter / vxTwitter API."""
+        if not requests:
+            return None
+
         m = re.search(r"status/(\d+)", url)
         if not m:
             return None
         tid = m.group(1)
 
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+        }
+
+        # Multiple resilient API endpoints
+        endpoints = [
+            f"https://api.fxtwitter.com/i/status/{tid}",
+            f"https://api.vxtwitter.com/Twitter/status/{tid}",
+            f"https://api.fixupx.com/i/status/{tid}",
+        ]
+
+        data = None
+        for endpoint in endpoints:
+            try:
+                resp = requests.get(endpoint, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data:
+                        break
+            except Exception:
+                continue
+
+        if not data:
+            return None
+
         try:
-            resp = requests.get(f"https://api.fxtwitter.com/i/status/{tid}", timeout=10)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            tw = data.get("tweet", {})
-            media = tw.get("media", {})
-            photos = media.get("photos") or [item for item in media.get("all", []) if item.get("type") == "photo"]
-            videos = media.get("videos") or [item for item in media.get("all", []) if item.get("type") == "video"]
-            title = tw.get("text", "X / Twitter Post")
-            uploader = tw.get("author", {}).get("name", "X (Twitter)")
+            tw = data.get("tweet") or data
+            media = tw.get("media") or {}
+            title = tw.get("text") or data.get("text") or "X / Twitter Post"
+            uploader = (
+                (tw.get("author") or {}).get("name")
+                or data.get("user_name")
+                or (tw.get("author") or {}).get("screen_name")
+                or "X (Twitter)"
+            )
+
+            photos: List[Dict[str, Any]] = []
+            videos: List[Dict[str, Any]] = []
+
+            # 1. Parse from standard fxtwitter media structure
+            if isinstance(media, dict):
+                photos = media.get("photos") or [item for item in media.get("all", []) if item.get("type") == "photo"]
+                videos = media.get("videos") or [item for item in media.get("all", []) if item.get("type") == "video"]
+
+            # 2. Parse from vxtwitter media_extended or mediaURLs fallback
+            if not photos and not videos:
+                extended = data.get("media_extended") or tw.get("media_extended") or []
+                for item in extended:
+                    itype = item.get("type")
+                    if itype in ("image", "photo"):
+                        photos.append({"url": item.get("url")})
+                    elif itype == "video":
+                        videos.append({"url": item.get("url"), "duration": item.get("duration", 0)})
+
+                if not photos and not videos:
+                    urls = data.get("mediaURLs") or tw.get("mediaURLs") or []
+                    for u in urls:
+                        if ".mp4" in u.lower():
+                            videos.append({"url": u})
+                        else:
+                            photos.append({"url": u})
+
+            # Video handling
+            if videos:
+                vid_url = videos[0].get("url")
+                if vid_url:
+                    fpath = temp_dir / f"{tid}.mp4"
+                    r = requests.get(vid_url, headers=headers, stream=True, timeout=30)
+                    if r.status_code == 200:
+                        with open(fpath, "wb") as f:
+                            for chunk in r.iter_content(65536):
+                                f.write(chunk)
+                        mb = fpath.stat().st_size / (1024 * 1024)
+                        thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
+                        return {
+                            "type": "video",
+                            "file_path": fpath,
+                            "file_paths": [fpath],
+                            "dir_path": temp_dir,
+                            "title": title,
+                            "uploader": uploader,
+                            "duration": int(videos[0].get("duration") or 0),
+                            "thumbnail": videos[0].get("thumbnail_url"),
+                            "thumb_file": thumb_file,
+                            "filesize_mb": mb,
+                        }
 
             # Photos handling
-            if photos and not videos:
+            if photos:
                 downloaded_files: List[Path] = []
                 for idx, p_info in enumerate(photos):
                     p_url = p_info.get("url")
                     if not p_url:
                         continue
+                    # Upgrade to highest quality on twimg
+                    if "twimg.com" in p_url and "name=" not in p_url:
+                        sep = "&" if "?" in p_url else "?"
+                        p_url = f"{p_url}{sep}name=orig"
+
                     ext = ".png" if ".png" in p_url.lower() else (".webp" if ".webp" in p_url.lower() else ".jpg")
                     fpath = temp_dir / f"{tid}_{idx}{ext}"
-                    r = requests.get(p_url, timeout=20)
-                    if r.status_code == 200:
+                    r = requests.get(p_url, headers=headers, timeout=20)
+                    if r.status_code == 200 and r.content:
                         with open(fpath, "wb") as f:
                             f.write(r.content)
                         downloaded_files.append(fpath)
@@ -286,46 +435,222 @@ class MediaDownloader:
                         "thumbnail": photos[0].get("url"),
                         "filesize_mb": mb,
                     }
+        except Exception as e:
+            logger.warning("Error in Twitter extraction: %s", e)
 
-            # Video handling
-            if videos:
-                vid_url = videos[0].get("url")
-                if vid_url:
-                    fpath = temp_dir / f"{tid}.mp4"
-                    r = requests.get(vid_url, stream=True, timeout=30)
-                    if r.status_code == 200:
+        return None
+
+    def _download_instagram(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
+        """
+        Download Instagram posts (single photos, multi-image carousels, mixed albums, or reels)
+        using multi-strategy extraction:
+        1. Direct API extraction via DDInstagram proxy
+        2. Instagram public embed page scraping
+        3. yt-dlp metadata extraction fallback
+        """
+        if not requests:
+            return None
+
+        m = re.search(r"instagram\.com/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url) or re.search(
+            r"instagr\.am/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url
+        )
+        if not m:
+            return None
+        shortcode = m.group(1)
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        # Strategy 1: ddinstagram proxy API (handles photos, multi-image carousels, and videos)
+        try:
+            api_url = f"https://api.ddinstagram.com/p/{shortcode}"
+            r = requests.get(api_url, headers=headers, timeout=12)
+            if r.status_code == 200:
+                data = r.json()
+                item = data.get("item") or {}
+                caption = item.get("caption") or "Instagram Post"
+                author = (item.get("user") or {}).get("username") or "Instagram"
+                media_list: List[tuple] = []
+
+                # Handle carousel/multi-media
+                carousel = item.get("carousel") or item.get("media_details") or []
+                if carousel:
+                    for c_item in carousel:
+                        m_url = c_item.get("url") or c_item.get("download_url")
+                        m_type = c_item.get("type") or ("video" if ".mp4" in (m_url or "").lower() else "photo")
+                        if m_url:
+                            media_list.append((m_type, m_url))
+                elif item.get("images"):
+                    for img_url in item.get("images"):
+                        media_list.append(("photo", img_url))
+                elif item.get("videos"):
+                    for vid_url in item.get("videos"):
+                        media_list.append(("video", vid_url))
+                elif item.get("video_url"):
+                    media_list.append(("video", item.get("video_url")))
+                elif item.get("image_url"):
+                    media_list.append(("photo", item.get("image_url")))
+
+                if media_list:
+                    downloaded_files: List[Path] = []
+                    for idx, (m_type, m_url) in enumerate(media_list[:10]):
+                        ext = ".mp4" if m_type == "video" or ".mp4" in m_url.lower() else ".jpg"
+                        fpath = temp_dir / f"ig_{shortcode}_{idx}{ext}"
+                        resp = requests.get(m_url, headers=headers, stream=True, timeout=25)
+                        if resp.status_code == 200:
+                            with open(fpath, "wb") as f:
+                                for chunk in resp.iter_content(65536):
+                                    if chunk:
+                                        f.write(chunk)
+                            if fpath.exists() and fpath.stat().st_size > 0:
+                                downloaded_files.append(fpath)
+
+                    if downloaded_files:
+                        if len(downloaded_files) == 1:
+                            target = downloaded_files[0]
+                            mb = target.stat().st_size / (1024 * 1024)
+                            is_vid = target.suffix.lower() in VIDEO_EXTS
+                            thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_vid else None
+                            return {
+                                "type": "video" if is_vid else "photo",
+                                "file_path": target,
+                                "file_paths": [target],
+                                "dir_path": temp_dir,
+                                "title": caption,
+                                "uploader": author,
+                                "duration": 0,
+                                "thumbnail": None,
+                                "thumb_file": thumb_file,
+                                "filesize_mb": mb,
+                            }
+                        else:
+                            mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
+                            return {
+                                "type": "album",
+                                "file_path": downloaded_files[0],
+                                "file_paths": downloaded_files,
+                                "dir_path": temp_dir,
+                                "title": caption,
+                                "uploader": author,
+                                "duration": 0,
+                                "thumbnail": None,
+                                "filesize_mb": mb,
+                            }
+        except Exception as e:
+            logger.debug("Instagram DDInstagram API error: %s", e)
+
+        # Strategy 2: Instagram Public Embed Page Scraping
+        try:
+            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+            r = requests.get(embed_url, headers=headers, timeout=12)
+            if r.status_code == 200 and r.text:
+                html_text = r.text
+
+                # Check for video in embed
+                vid_matches = re.findall(r'class="EmbeddedMediaVideo"[^>]*src="([^"]+)"', html_text) or re.findall(
+                    r'"video_url":"([^"]+)"', html_text
+                )
+                if vid_matches:
+                    vid_url = vid_matches[0].replace(r"\/", "/").replace("&amp;", "&")
+                    fpath = temp_dir / f"ig_{shortcode}.mp4"
+                    resp = requests.get(vid_url, headers=headers, stream=True, timeout=30)
+                    if resp.status_code == 200:
                         with open(fpath, "wb") as f:
-                            for chunk in r.iter_content(65536):
+                            for chunk in resp.iter_content(65536):
                                 f.write(chunk)
-                        mb = fpath.stat().st_size / (1024 * 1024)
+                        if fpath.exists() and fpath.stat().st_size > 0:
+                            mb = fpath.stat().st_size / (1024 * 1024)
+                            thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
+                            return {
+                                "type": "video",
+                                "file_path": fpath,
+                                "file_paths": [fpath],
+                                "dir_path": temp_dir,
+                                "title": "Instagram Video",
+                                "uploader": "Instagram",
+                                "duration": 0,
+                                "thumbnail": None,
+                                "thumb_file": thumb_file,
+                                "filesize_mb": mb,
+                            }
+
+                # Check for images in embed
+                img_matches = re.findall(r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"', html_text) or re.findall(
+                    r'"display_url":"([^"]+)"', html_text
+                )
+                if not img_matches:
+                    cdn_matches = re.findall(r'(https://[^"\'\s<>]*cdninstagram\.com/[^"\'\s<>]*)', html_text)
+                    img_matches = [u for u in cdn_matches if "150x150" not in u and "s150x150" not in u]
+
+                if img_matches:
+                    seen_urls = set()
+                    unique_img_urls = []
+                    for u in img_matches:
+                        clean_u = u.replace(r"\/", "/").replace("&amp;", "&")
+                        if clean_u not in seen_urls:
+                            seen_urls.add(clean_u)
+                            unique_img_urls.append(clean_u)
+
+                    downloaded_files: List[Path] = []
+                    for idx, img_url in enumerate(unique_img_urls[:10]):
+                        fpath = temp_dir / f"ig_{shortcode}_{idx}.jpg"
+                        resp = requests.get(img_url, headers=headers, timeout=20)
+                        if resp.status_code == 200 and resp.content:
+                            with open(fpath, "wb") as f:
+                                f.write(resp.content)
+                            if fpath.stat().st_size > 5000:
+                                downloaded_files.append(fpath)
+
+                    if len(downloaded_files) == 1:
+                        mb = downloaded_files[0].stat().st_size / (1024 * 1024)
                         return {
-                            "type": "video",
-                            "file_path": fpath,
-                            "file_paths": [fpath],
+                            "type": "photo",
+                            "file_path": downloaded_files[0],
+                            "file_paths": downloaded_files,
                             "dir_path": temp_dir,
-                            "title": title,
-                            "uploader": uploader,
-                            "duration": int(videos[0].get("duration") or 0),
-                            "thumbnail": videos[0].get("thumbnail_url"),
+                            "title": "Instagram Post",
+                            "uploader": "Instagram",
+                            "duration": 0,
+                            "thumbnail": None,
+                            "filesize_mb": mb,
+                        }
+                    elif len(downloaded_files) > 1:
+                        mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
+                        return {
+                            "type": "album",
+                            "file_path": downloaded_files[0],
+                            "file_paths": downloaded_files,
+                            "dir_path": temp_dir,
+                            "title": "Instagram Gallery",
+                            "uploader": "Instagram",
+                            "duration": 0,
+                            "thumbnail": None,
                             "filesize_mb": mb,
                         }
         except Exception as e:
-            logger.warning(f"Error in Twitter fx download: {e}")
+            logger.debug("Instagram embed scraping error: %s", e)
 
         return None
 
     def _download_gallery_dl(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """Fallback extractor for image posts/galleries using gallery-dl."""
         try:
-            cmd = [
-                sys.executable,
-                "-m",
-                "gallery_dl",
-                "--dest",
-                str(temp_dir),
-                "--no-mtime",
-                url,
-            ]
+            gdl_bin = shutil.which("gallery-dl")
+            if gdl_bin:
+                cmd = [gdl_bin, "--dest", str(temp_dir), "--no-mtime"]
+            else:
+                cmd = [sys.executable, "-m", "gallery_dl", "--dest", str(temp_dir), "--no-mtime"]
+
+            if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
+                cmd.extend(["--cookies", str(config.COOKIES_FILE)])
+
+            cmd.append(url)
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
 
             all_files = [f for f in temp_dir.rglob("*") if f.is_file()]
@@ -387,12 +712,23 @@ class MediaDownloader:
             url = resolve_pinterest_url(url)
 
         def _probe():
-            opts = self._get_ydl_base_opts()
-            opts.update({
-                "skip_download": True,
-            })
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=False)
+            is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
+            attempts = [{"use_cookies": True, "clients": None}]
+            if is_youtube:
+                attempts.append({"use_cookies": False, "clients": ["ios", "android"]})
+
+            for att in attempts:
+                try:
+                    opts = self._get_ydl_base_opts(
+                        use_cookies=att["use_cookies"],
+                        youtube_clients=att["clients"],
+                    )
+                    opts.update({"skip_download": True})
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(url, download=False)
+                except Exception:
+                    continue
+            return {}
 
         try:
             info = await asyncio.to_thread(_probe)
@@ -568,8 +904,91 @@ class MediaDownloader:
 
             ydl_opts["progress_hooks"] = [_hook]
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
+
+        attempts = [{"use_cookies": True, "clients": None}]
+        if is_youtube:
+            attempts.append({"use_cookies": False, "clients": ["ios", "android"]})
+            attempts.append({"use_cookies": False, "clients": ["mweb", "tv"]})
+
+        info = None
+        ytdl_dl_err = None
+
+        for att_idx, att in enumerate(attempts):
+            cur_opts = self._get_ydl_base_opts(
+                use_cookies=att["use_cookies"],
+                youtube_clients=att["clients"],
+            )
+            cur_opts.update({
+                "paths": {"home": temp_dir.as_posix()},
+                "outtmpl": {"default": "%(id).30s.%(ext)s"},
+                "format": format_spec,
+            })
+            if progress_callback:
+                cur_opts["progress_hooks"] = ydl_opts.get("progress_hooks", [])
+
+            try:
+                with yt_dlp.YoutubeDL(cur_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                ytdl_dl_err = None
+                break
+            except Exception as err:
+                ytdl_dl_err = err
+                err_str = str(err).lower()
+                is_cookie_or_bot = any(
+                    k in err_str
+                    for k in (
+                        "sign in",
+                        "bot",
+                        "confirm you",
+                        "cookie",
+                        "login",
+                        "429",
+                        "unavailable",
+                        "private",
+                    )
+                )
+                if is_youtube and is_cookie_or_bot and att_idx < len(attempts) - 1:
+                    logger.warning(
+                        "YouTube attempt %d failed (%s); retrying with alternative client...",
+                        att_idx + 1,
+                        err,
+                    )
+                    continue
+                break
+
+        if ytdl_dl_err:
+            # If download failed because there are no video formats (e.g. photo post or image carousel),
+            # probe metadata without stream requirement and download photos/slides directly
+            if requests and ("no video format" in str(ytdl_dl_err).lower() or "formats" in str(ytdl_dl_err).lower()):
+                logger.info("No video formats found in yt-dlp, attempting image/carousel metadata download...")
+                try:
+                    opts_meta = self._get_ydl_base_opts()
+                    opts_meta["skip_download"] = True
+                    with yt_dlp.YoutubeDL(opts_meta) as ydl_meta:
+                        info = ydl_meta.extract_info(url, download=False)
+                    entries = (info or {}).get("entries")
+                    if entries:
+                        for idx, entry in enumerate(entries[:10]):
+                            img_u = entry.get("url") or entry.get("thumbnail")
+                            if img_u:
+                                ext = ".mp4" if entry.get("vcodec") != "none" and ".mp4" in img_u.lower() else ".jpg"
+                                fpath = temp_dir / f"post_{idx}{ext}"
+                                r = requests.get(img_u, timeout=25)
+                                if r.status_code == 200 and r.content:
+                                    with open(fpath, "wb") as f:
+                                        f.write(r.content)
+                    elif info and (info.get("url") or info.get("thumbnail")):
+                        img_u = info.get("url") or info.get("thumbnail")
+                        fpath = temp_dir / "post_photo.jpg"
+                        r = requests.get(img_u, timeout=25)
+                        if r.status_code == 200 and r.content:
+                            with open(fpath, "wb") as f:
+                                f.write(r.content)
+                except Exception:
+                    pass
+            if not list(temp_dir.glob("*")):
+                raise ytdl_dl_err
 
         files = [f for f in temp_dir.glob("*") if f.is_file()]
         if not files:
@@ -598,22 +1017,44 @@ class MediaDownloader:
         filesize = sum(f.stat().st_size for f in out_files)
         filesize_mb = filesize / (1024 * 1024)
         duration = (info or {}).get("duration", 0)
+        is_compressed = False
 
-        # Preserve the downloaded source file without transcoding or downscaling.
-        # The standard Telegram Bot API currently accepts uploads up to 50 MB.
-        # Reject oversized files rather than silently degrading their quality.
+        # Check Telegram 50 MB limit: attempt smart compression if video exceeds limit
         if filesize_mb > 50:
-            dur_mins = int(duration // 60) if duration else 0
-            dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
-            raise DownloaderError(
-                f"Original video is {filesize_mb:.1f} MB, which exceeds Telegram's 50 MB bot upload limit{dur_msg}. "
-                f"The bot did not compress or lower its quality. "
-                f"Sending larger originals requires a self-hosted Telegram Bot API server."
-            )
+            if media_type == "video":
+                logger.info(
+                    "Video size (%.1f MB) exceeds Telegram 50 MB limit; attempting auto-compression...",
+                    filesize_mb,
+                )
+                compressed = self._compress_video_to_fit(target_file, temp_dir, duration)
+                if compressed and compressed.exists():
+                    target_file = compressed
+                    out_files = [target_file]
+                    filesize_mb = target_file.stat().st_size / (1024 * 1024)
+                    is_compressed = True
+                else:
+                    dur_mins = int(duration // 60) if duration else 0
+                    dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
+                    raise DownloaderError(
+                        f"Original video is {filesize_mb:.1f} MB, which exceeds Telegram's 50 MB bot limit{dur_msg}, "
+                        f"and could not be compressed without severe quality degradation."
+                    )
+            else:
+                raise DownloaderError(
+                    f"Media size is {filesize_mb:.1f} MB, which exceeds Telegram's 50 MB bot upload limit."
+                )
 
         title = (info or {}).get("title", "Video")
         uploader = (info or {}).get("uploader") or (info or {}).get("channel", "Unknown")
         thumbnail = (info or {}).get("thumbnail")
+
+        # Generate a video thumbnail for fast Telegram player preview
+        thumb_file = None
+        if media_type == "video" and target_file.exists():
+            thumb_file = self._extract_video_thumbnail(target_file, temp_dir)
+
+        width = (info or {}).get("width")
+        height = (info or {}).get("height")
 
         return {
             "type": media_type,
@@ -624,6 +1065,10 @@ class MediaDownloader:
             "uploader": uploader,
             "duration": duration,
             "thumbnail": thumbnail,
+            "thumb_file": thumb_file,
+            "width": width,
+            "height": height,
+            "is_compressed": is_compressed,
             "filesize_mb": filesize_mb,
         }
 
@@ -645,7 +1090,7 @@ class MediaDownloader:
             url = resolve_pinterest_url(url)
 
         try:
-            # 1. Specialized Twitter / X Downloader (instant direct photo/video extraction)
+            # 1. Specialized Twitter / X Downloader (instant direct photo/video/album extraction)
             if is_twitter_url(url):
                 try:
                     tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)
@@ -654,20 +1099,38 @@ class MediaDownloader:
                 except Exception as e:
                     logger.warning(f"Twitter engine error, trying fallback: {e}")
 
-            # 2. Main yt-dlp download (handles YouTube, Pinterest videos, Instagram, TikTok, Reddit, Facebook, etc.)
+            # 2. Specialized Instagram Downloader (photos, multi-image carousels, reels)
+            if is_instagram_url(url):
+                try:
+                    ig_res = await asyncio.to_thread(self._download_instagram, url, temp_dir)
+                    if ig_res:
+                        return ig_res
+                except Exception as e:
+                    logger.warning(f"Instagram engine error, trying fallback: {e}")
+
+            # 3. Main yt-dlp download (handles YouTube, Instagram, TikTok, Reddit, Pinterest, Facebook, etc.)
             try:
                 return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, resolution, progress_callback)
             except Exception as ytdl_err:
                 logger.info(f"yt-dlp attempt failed for {url}: {ytdl_err}")
 
-                # 3. Fallback to specialized Pinterest handler (for image pins or pins with no video streams)
+                # 4. Fallback to specialized Pinterest handler (for image pins or pins with no video streams)
                 if is_pinterest_url(url) and Pinterest:
                     try:
                         return await asyncio.to_thread(self._download_pinterest, url, temp_dir)
                     except Exception as pin_err:
                         logger.warning(f"Pinterest fallback error: {pin_err}")
 
-                # 4. Fallback to gallery-dl for posts without video streams (Instagram photos, carousels, Pinterest images)
+                # 5. Secondary fallback to Instagram extractor
+                if is_instagram_url(url):
+                    try:
+                        ig_res = await asyncio.to_thread(self._download_instagram, url, temp_dir)
+                        if ig_res:
+                            return ig_res
+                    except Exception as ig_err:
+                        logger.warning(f"Instagram fallback error: {ig_err}")
+
+                # 6. Fallback to gallery-dl for posts without video streams (Instagram photos, carousels, Pinterest images)
                 gdl_res = await asyncio.to_thread(self._download_gallery_dl, url, temp_dir)
                 if gdl_res:
                     return gdl_res
@@ -729,8 +1192,44 @@ class MediaDownloader:
             ydl_opts["progress_hooks"] = [_hook]
 
         def _download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(url, download=True)
+            is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
+            attempts = [{"use_cookies": True, "clients": None}]
+            if is_youtube:
+                attempts.append({"use_cookies": False, "clients": ["ios", "android"]})
+
+            for att_idx, att in enumerate(attempts):
+                cur_opts = self._get_ydl_base_opts(
+                    use_cookies=att["use_cookies"],
+                    youtube_clients=att["clients"],
+                )
+                cur_opts.update({
+                    "paths": {"home": temp_dir.as_posix()},
+                    "outtmpl": {"default": "%(id).30s.%(ext)s"},
+                    "format": "bestaudio/best",
+                    "writethumbnail": True,
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "192",
+                        },
+                        {
+                            "key": "FFmpegMetadata",
+                            "add_metadata": True,
+                        },
+                    ],
+                })
+                if progress_callback:
+                    cur_opts["progress_hooks"] = ydl_opts.get("progress_hooks", [])
+
+                try:
+                    with yt_dlp.YoutubeDL(cur_opts) as ydl:
+                        return ydl.extract_info(url, download=True)
+                except Exception as e:
+                    if is_youtube and att_idx < len(attempts) - 1:
+                        logger.warning("Audio download attempt failed (%s), retrying without cookies...", e)
+                        continue
+                    raise
 
         try:
             info = await asyncio.to_thread(_download)

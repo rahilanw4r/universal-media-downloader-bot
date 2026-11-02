@@ -1,11 +1,23 @@
 import os
 import json
 from pathlib import Path
-from typing import Dict, Any
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
+from typing import Dict, Any, Optional
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # Fallback minimal .env loader if python-dotenv is not installed
+    _env_path = Path(__file__).resolve().parent / ".env"
+    if _env_path.exists():
+        try:
+            with open(_env_path, "r", encoding="utf-8") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith("#") and "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        os.environ.setdefault(_k.strip(), _v.strip())
+        except Exception:
+            pass
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -23,23 +35,134 @@ ALLOWED_TELEGRAM_USER_IDS = [
 ]
 
 # Optional: Path to cookies.txt or direct cookies content from environment variable
-_cookies_content = os.getenv("COOKIES_CONTENT", "").strip() or os.getenv("YOUTUBE_COOKIES", "").strip()
-_cookies_env = os.getenv("COOKIES_FILE", "").strip()
+COOKIES_FILE: Optional[Path] = None
 
-if _cookies_content:
-    c_file = BASE_DIR / "cookies.txt"
+
+def _clean_cookie_content(raw: str) -> str:
+    """Normalize raw cookie string, supporting base64 encoding, literal \\n, and Netscape headers."""
+    import base64
+
+    raw = raw.strip()
+    if not raw:
+        return ""
+
+    # Check if base64 encoded
     try:
-        with open(c_file, "w", encoding="utf-8") as f:
-            f.write(_cookies_content)
-        COOKIES_FILE = c_file
+        decoded = base64.b64decode(raw, validate=True).decode("utf-8", errors="ignore")
+        if "youtube.com" in decoded or "Netscape" in decoded or "\t" in decoded:
+            raw = decoded
     except Exception:
-        COOKIES_FILE = None
-elif _cookies_env and Path(_cookies_env).exists():
-    COOKIES_FILE = Path(_cookies_env).resolve()
-elif (BASE_DIR / "cookies.txt").exists():
-    COOKIES_FILE = BASE_DIR / "cookies.txt"
-else:
+        pass
+
+    # Normalize literal \r\n and \n sequences from single-line environment variables
+    if "\\n" in raw:
+        raw = raw.replace("\\r\\n", "\n").replace("\\n", "\n")
+
+    # Ensure valid Netscape HTTP Cookie file header
+    if not raw.startswith("# Netscape") and not raw.startswith("# HTTP"):
+        raw = "# Netscape HTTP Cookie File\n" + raw
+
+    return raw.strip() + "\n"
+
+
+def reload_cookies() -> Optional[Path]:
+    """Reload and validate cookies file from environment variable or disk."""
+    global COOKIES_FILE
+
+    _cookies_content = os.getenv("COOKIES_CONTENT", "").strip() or os.getenv("YOUTUBE_COOKIES", "").strip()
+    _cookies_env = os.getenv("COOKIES_FILE", "").strip()
+
+    if _cookies_content:
+        c_file = BASE_DIR / "cookies.txt"
+        try:
+            cleaned = _clean_cookie_content(_cookies_content)
+            with open(c_file, "w", encoding="utf-8") as f:
+                f.write(cleaned)
+            COOKIES_FILE = c_file
+            return COOKIES_FILE
+        except Exception:
+            pass
+
+    if _cookies_env and Path(_cookies_env).exists():
+        COOKIES_FILE = Path(_cookies_env).resolve()
+        return COOKIES_FILE
+
+    default_file = BASE_DIR / "cookies.txt"
+    if default_file.exists() and default_file.stat().st_size > 10:
+        COOKIES_FILE = default_file
+        return COOKIES_FILE
+
     COOKIES_FILE = None
+    return None
+
+
+def save_cookies_file(content: str) -> bool:
+    """Save updated cookies content into BASE_DIR / cookies.txt."""
+    global COOKIES_FILE
+    try:
+        cleaned = _clean_cookie_content(content)
+        if not cleaned:
+            return False
+        c_file = BASE_DIR / "cookies.txt"
+        with open(c_file, "w", encoding="utf-8") as f:
+            f.write(cleaned)
+        COOKIES_FILE = c_file
+        return True
+    except Exception:
+        return False
+
+
+def get_cookies_status() -> Dict[str, Any]:
+    """Get diagnostic information about currently loaded cookies."""
+    reload_cookies()
+    if not COOKIES_FILE or not COOKIES_FILE.exists():
+        return {
+            "loaded": False,
+            "message": "No cookies file found. Bot is running in cookie-less mobile client bypass mode.",
+            "path": None,
+            "total_cookies": 0,
+            "youtube_cookies": 0,
+            "has_login": False,
+        }
+
+    try:
+        size = COOKIES_FILE.stat().st_size
+        lines = 0
+        yt_count = 0
+        has_login = False
+        with open(COOKIES_FILE, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                lines += 1
+                if "youtube.com" in line:
+                    yt_count += 1
+                    if any(k in line for k in ("LOGIN_INFO", "SID", "SSID", "HSID", "__Secure-3PSID")):
+                        has_login = True
+
+        return {
+            "loaded": True,
+            "path": str(COOKIES_FILE),
+            "size_bytes": size,
+            "total_cookies": lines,
+            "youtube_cookies": yt_count,
+            "has_login": has_login,
+            "message": f"Active ({yt_count} YouTube cookies, {'authenticated' if has_login else 'guest session'}).",
+        }
+    except Exception as e:
+        return {
+            "loaded": False,
+            "message": f"Error reading cookies file: {e}",
+            "path": str(COOKIES_FILE),
+            "total_cookies": 0,
+            "youtube_cookies": 0,
+            "has_login": False,
+        }
+
+
+# Initialize cookies on module load
+reload_cookies()
 
 # User download preferences (persistent to user_preferences.json)
 _PREFS_FILE = BASE_DIR / "user_preferences.json"

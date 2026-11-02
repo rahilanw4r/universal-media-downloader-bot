@@ -10,6 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent
 STATS_FILE = BASE_DIR / "bot_stats.json"
 
 _lock = threading.RLock()
+_process_start_time = time.time()
 
 # In-memory stats cache
 _stats: Dict[str, Any] = {
@@ -142,6 +143,23 @@ def _time_ago(iso_str: str) -> str:
             return f"{diff_sec // 86400}d ago"
     except Exception:
         return "recently"
+
+
+def format_uptime() -> str:
+    """Format bot process uptime into friendly human-readable duration (e.g. 1d 4h 12m 30s)."""
+    uptime_sec = max(0, int(time.time() - _process_start_time))
+    days, rem = divmod(uptime_sec, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0 or days > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0 or hours > 0 or days > 0:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
 
 
 def get_analytics_summary() -> Dict[str, Any]:
