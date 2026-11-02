@@ -253,6 +253,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
+        f"• <code>/changelog</code> — Version release notes & updates\n"
         f"• <code>/help</code> — Full guide & instructions\n"
         f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
         f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
@@ -1617,6 +1618,7 @@ async def post_init(application: Application) -> None:
         BotCommand("stop", "Stop active downloads & clear sessions"),
         BotCommand("ping", "Check bot latency & server status"),
         BotCommand("stats", "View download analytics"),
+        BotCommand("changelog", "View version history & updates"),
         BotCommand("help", "User manual & instructions"),
         BotCommand("about", "About bot & specifications"),
         BotCommand("admin", "Contact developer / support"),
