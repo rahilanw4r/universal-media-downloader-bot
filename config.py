@@ -28,6 +28,23 @@ ADMIN_USERNAME = "@RahilAnw4r"
 ADMIN_LINK = "https://t.me/RahilAnw4r"
 ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
 
+# Telegram Bot API Server Configuration
+# Leave empty or unset to use official Telegram Cloud API (50 MB upload limit).
+# Set to local server URL (e.g. "http://localhost:8081" or "http://127.0.0.1:8081") to unlock up to 2000 MB (2 GB) uploads!
+LOCAL_BOT_API_URL = os.getenv("LOCAL_BOT_API_URL", "").strip()
+# Set to True if the bot and local Bot API server share filesystem access for instant zero-copy delivery
+LOCAL_BOT_API_LOCAL_MODE = os.getenv("LOCAL_BOT_API_LOCAL_MODE", "false").lower() in ("1", "true", "yes")
+
+# Maximum upload file size in megabytes (Default: 50 MB on official cloud API; 2000 MB if Local Bot API is set)
+_default_max_size = 2000.0 if LOCAL_BOT_API_URL else 50.0
+try:
+    MAX_FILE_SIZE_MB = float(os.getenv("MAX_FILE_SIZE_MB", str(_default_max_size)))
+except ValueError:
+    MAX_FILE_SIZE_MB = _default_max_size
+
+# Automatically split oversized videos into seamless parts instead of failing
+AUTO_SPLIT_OVERSIZED_VIDEOS = os.getenv("AUTO_SPLIT_OVERSIZED_VIDEOS", "true").lower() in ("1", "true", "yes")
+
 # Forced channel membership (set to empty or "none" to disable)
 FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "@Bootscreen").strip()
 
@@ -190,6 +207,18 @@ def get_cookies_status() -> Dict[str, Any]:
             "has_ig_login": False,
             "has_tb_login": False,
         }
+
+
+def get_api_server_info() -> Dict[str, Any]:
+    """Get diagnostic information about the Telegram Bot API server and file limits."""
+    is_local = bool(LOCAL_BOT_API_URL)
+    return {
+        "is_local": is_local,
+        "base_url": LOCAL_BOT_API_URL if is_local else "https://api.telegram.org",
+        "local_mode": LOCAL_BOT_API_LOCAL_MODE if is_local else False,
+        "max_filesize_mb": MAX_FILE_SIZE_MB,
+        "auto_split": AUTO_SPLIT_OVERSIZED_VIDEOS,
+    }
 
 
 # Initialize cookies on module load

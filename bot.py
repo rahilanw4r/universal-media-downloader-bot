@@ -733,17 +733,12 @@ async def execute_download(
                     width = result.get("width")
                     height = result.get("height")
                     is_comp = result.get("is_compressed", False)
+                    is_split = result.get("is_split", False)
+                    file_paths = result.get("file_paths", [file_path])
 
                     dur_str = f" • ⏱️ {int(duration)}s" if duration else ""
                     res_str = f" ({resolution}p)" if resolution else ""
-                    comp_str = "\n⚡ <i>Auto-compressed to fit Telegram 50MB limit</i>" if is_comp else ""
-
-                    caption = (
-                        f"🎬 <b>{html.escape(title[:100])}</b>\n"
-                        f"📁 {html.escape(platform)}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}{comp_str}"
-                    )
-                    if bot_handle:
-                        caption += f"\n🤖 {html.escape(bot_handle)}"
+                    comp_str = f"\n⚡ <i>Auto-compressed to fit Telegram {config.MAX_FILE_SIZE_MB:.0f}MB limit</i>" if is_comp else ""
 
                     # Quick action buttons: One-tap MP3 extraction or mode switch
                     post_keyboard = InlineKeyboardMarkup([
@@ -761,27 +756,59 @@ async def execute_download(
                             thumb_handle = None
 
                     try:
-                        with open(file_path, "rb") as f:
-                            try:
-                                await context.bot.send_video(
-                                    chat_id=chat_id,
-                                    video=f,
-                                    thumbnail=thumb_handle,
-                                    duration=int(duration) if duration else None,
-                                    width=width,
-                                    height=height,
-                                    caption=caption,
-                                    parse_mode=ParseMode.HTML,
-                                    supports_streaming=True,
-                                    reply_markup=post_keyboard,
-                                    read_timeout=300,
-                                    write_timeout=300,
+                        # Multi-part video delivery if auto-split was triggered
+                        if is_split and len(file_paths) > 1:
+                            total_parts = len(file_paths)
+                            for part_idx, part_path in enumerate(file_paths):
+                                part_size_mb = part_path.stat().st_size / (1024 * 1024)
+                                part_caption = (
+                                    f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n"
+                                    f"📁 {html.escape(platform)}{res_str} • 📦 {part_size_mb:.1f} MB\n"
+                                    f"✂️ <i>Auto-split for 100% original quality delivery</i>"
                                 )
-                            except Exception as e:
-                                if "parse entities" in str(e).lower():
-                                    f.seek(0)
+                                if bot_handle:
+                                    part_caption += f"\n🤖 {html.escape(bot_handle)}"
+                                is_last = (part_idx == total_parts - 1)
+                                with open(part_path, "rb") as pf:
+                                    try:
+                                        await context.bot.send_video(
+                                            chat_id=chat_id,
+                                            video=pf,
+                                            thumbnail=thumb_handle,
+                                            caption=part_caption,
+                                            parse_mode=ParseMode.HTML,
+                                            supports_streaming=True,
+                                            reply_markup=post_keyboard if is_last else None,
+                                            read_timeout=600,
+                                            write_timeout=600,
+                                        )
+                                    except Exception as e:
+                                        if "parse entities" in str(e).lower():
+                                            pf.seek(0)
+                                            await context.bot.send_video(
+                                                chat_id=chat_id,
+                                                video=pf,
+                                                thumbnail=thumb_handle,
+                                                caption=f"🎬 {title[:85]} (Part {part_idx + 1}/{total_parts})\n📁 {platform} • 📦 {part_size_mb:.1f} MB",
+                                                supports_streaming=True,
+                                                reply_markup=post_keyboard if is_last else None,
+                                                read_timeout=600,
+                                                write_timeout=600,
+                                            )
+                                        else:
+                                            raise
                                     if thumb_handle and hasattr(thumb_handle, "seek"):
                                         thumb_handle.seek(0)
+                        else:
+                            caption = (
+                                f"🎬 <b>{html.escape(title[:100])}</b>\n"
+                                f"📁 {html.escape(platform)}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}{comp_str}"
+                            )
+                            if bot_handle:
+                                caption += f"\n🤖 {html.escape(bot_handle)}"
+
+                            with open(file_path, "rb") as f:
+                                try:
                                     await context.bot.send_video(
                                         chat_id=chat_id,
                                         video=f,
@@ -789,14 +816,33 @@ async def execute_download(
                                         duration=int(duration) if duration else None,
                                         width=width,
                                         height=height,
-                                        caption=f"🎬 {title[:100]}\n📁 {platform}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}",
+                                        caption=caption,
+                                        parse_mode=ParseMode.HTML,
                                         supports_streaming=True,
                                         reply_markup=post_keyboard,
-                                        read_timeout=300,
-                                        write_timeout=300,
+                                        read_timeout=600,
+                                        write_timeout=600,
                                     )
-                                else:
-                                    raise
+                                except Exception as e:
+                                    if "parse entities" in str(e).lower():
+                                        f.seek(0)
+                                        if thumb_handle and hasattr(thumb_handle, "seek"):
+                                            thumb_handle.seek(0)
+                                        await context.bot.send_video(
+                                            chat_id=chat_id,
+                                            video=f,
+                                            thumbnail=thumb_handle,
+                                            duration=int(duration) if duration else None,
+                                            width=width,
+                                            height=height,
+                                            caption=f"🎬 {title[:100]}\n📁 {platform}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}",
+                                            supports_streaming=True,
+                                            reply_markup=post_keyboard,
+                                            read_timeout=600,
+                                            write_timeout=600,
+                                        )
+                                    else:
+                                        raise
                     finally:
                         if thumb_handle:
                             thumb_handle.close()
@@ -826,10 +872,10 @@ async def execute_download(
                         "\n\n💡 <b>Authentication Notice:</b> This platform is currently requiring login credentials or cookies. "
                         f"Admin can upload an updated <code>cookies.txt</code> using <code>/cookies</code>."
                     )
-                elif any(x in raw_err.lower() for x in ("too large", "50mb", "50 mb")):
+                elif any(x in raw_err.lower() for x in ("too large", "limit", "exceeds")):
                     help_note = (
-                        "\n\n📦 <b>Size Limit Notice:</b> Telegram allows bots to send files up to 50MB. "
-                        "The video could not be compressed below 50MB without severe quality loss."
+                        f"\n\n📦 <b>Size Limit Notice:</b> Current upload limit is {config.MAX_FILE_SIZE_MB:.0f}MB. "
+                        "To upload files up to 2,000MB (2 GB), configure a Local Bot API server in <code>.env</code>."
                     )
                 else:
                     help_note = f"\n\n💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
@@ -847,7 +893,7 @@ async def execute_download(
                 if "image_process_failed" in raw_err.lower():
                     friendly_err = "Telegram rejected image format rendering. Please try again."
                 elif "file is too big" in raw_err.lower():
-                    friendly_err = "File exceeds Telegram bot 50MB upload limit."
+                    friendly_err = f"File exceeds current {config.MAX_FILE_SIZE_MB:.0f}MB upload limit. Run a Local Bot API server to unlock 2,000MB (2 GB)."
                 else:
                     friendly_err = html.escape(raw_err)
 
@@ -1429,15 +1475,21 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     st = config.get_cookies_status()
+    api_st = config.get_api_server_info()
     loaded_icon = "✅ Active" if st.get("loaded") else "⚠️ Inactive / Missing"
     yt_login_icon = "🔑 Authenticated" if st.get("has_login") else "👤 Guest Session"
     ig_login_icon = "🔑 Authenticated" if st.get("has_ig_login") else ("👤 Guest Session" if st.get("instagram_cookies", 0) > 0 else "None")
     tb_login_icon = "🔑 Authenticated" if st.get("has_tb_login") else ("👤 Guest Session" if st.get("terabox_cookies", 0) > 0 else "Bypass")
+    api_engine_icon = "🚀 Local Bot API Server" if api_st.get("is_local") else "☁️ Cloud Bot API (Default)"
 
     msg = (
-        "🍪 <b>Platform Authentication Diagnostics</b>\n"
+        "🍪 <b>Platform & API Server Diagnostics</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"• <b>Status:</b> {loaded_icon}\n"
+        f"🌐 <b>Telegram Engine:</b> {api_engine_icon}\n"
+        f"• <b>Max Upload Limit:</b> <code>{api_st.get('max_filesize_mb', 50):.0f} MB</code>\n"
+        f"• <b>Server Base URL:</b> <code>{html.escape(api_st.get('base_url', ''))}</code>\n"
+        f"• <b>Auto-Split Large Videos:</b> <code>{'Enabled' if api_st.get('auto_split') else 'Disabled'}</code>\n\n"
+        f"🍪 <b>Cookies Status:</b> {loaded_icon}\n"
         f"• <b>Details:</b> {html.escape(st.get('message', ''))}\n"
         f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
         f"• <b>YouTube:</b> <code>{st.get('youtube_cookies', 0)}</code> cookies ({yt_login_icon})\n"
@@ -1561,16 +1613,32 @@ def main():
     start_health_server()
 
     print("🚀 Initializing Universal Media Downloader Bot...")
-    app = (
+    builder = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
-        .read_timeout(300)
-        .write_timeout(300)
+        .read_timeout(600)
+        .write_timeout(600)
         .connect_timeout(60)
         .pool_timeout(60)
         .post_init(post_init)
-        .build()
     )
+
+    if config.LOCAL_BOT_API_URL:
+        base_url = config.LOCAL_BOT_API_URL.rstrip("/")
+        if not base_url.endswith("/bot"):
+            bot_base = f"{base_url}/bot"
+            file_base = f"{base_url}/file/bot"
+        else:
+            bot_base = base_url
+            file_base = base_url.replace("/bot", "/file/bot")
+        builder = builder.base_url(bot_base).base_file_url(file_base)
+        if config.LOCAL_BOT_API_LOCAL_MODE:
+            builder = builder.local_mode(True)
+        print(f"🌐 Local Bot API Server active: {bot_base} (Max file size: {config.MAX_FILE_SIZE_MB:.0f} MB, local_mode={config.LOCAL_BOT_API_LOCAL_MODE})")
+    else:
+        print(f"☁️ Cloud Telegram API active (Standard {config.MAX_FILE_SIZE_MB:.0f} MB upload limit).")
+
+    app = builder.build()
 
     # Core commands
     app.add_handler(CommandHandler("start", start_command))

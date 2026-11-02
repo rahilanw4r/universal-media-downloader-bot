@@ -10,6 +10,7 @@ import tempfile
 import logging
 import subprocess
 import http.cookiejar
+import math
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 
@@ -374,8 +375,8 @@ class MediaDownloader:
             downloaded_path = files[0]
 
         filesize_mb = downloaded_path.stat().st_size / (1024 * 1024)
-        if filesize_mb > 50:
-            raise DownloaderError(f"File is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit).")
+        if filesize_mb > config.MAX_FILE_SIZE_MB:
+            raise DownloaderError(f"File is too large for Telegram ({filesize_mb:.1f} MB > {config.MAX_FILE_SIZE_MB:.0f} MB limit).")
 
         # Strictly determine output type by actual saved file extension
         out_type = "video" if downloaded_path.suffix.lower() in VIDEO_EXTS else "photo"
@@ -761,18 +762,29 @@ class MediaDownloader:
         is_img = out_path.suffix.lower() in IMAGE_EXTS
         is_comp = False
 
-        # Attempt compression if video exceeds Telegram 50MB limit
-        if filesize_mb > 50 and is_vid:
-            logger.info("TeraBox video exceeds 50MB (%.1f MB), attempting fast compression...", filesize_mb)
+        # Attempt compression or splitting if video exceeds configured limit
+        is_split = False
+        parts = [out_path]
+        if filesize_mb > config.MAX_FILE_SIZE_MB and is_vid:
+            logger.info("TeraBox video exceeds %.0fMB (%.1f MB), attempting fast compression...", config.MAX_FILE_SIZE_MB, filesize_mb)
             compressed = self._compress_video_to_fit(out_path, temp_dir, duration=0)
             if compressed and compressed.exists():
                 out_path = compressed
                 filesize_mb = out_path.stat().st_size / (1024 * 1024)
+                parts = [out_path]
                 is_comp = True
 
-        if filesize_mb > 50:
+        if filesize_mb > config.MAX_FILE_SIZE_MB and is_vid and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+            split_parts = self._split_video_into_parts(out_path, temp_dir)
+            if len(split_parts) > 1:
+                parts = split_parts
+                out_path = split_parts[0]
+                is_split = True
+                logger.info("Auto-split oversized TeraBox video into %d parts", len(parts))
+
+        if not is_split and filesize_mb > config.MAX_FILE_SIZE_MB:
             raise DownloaderError(
-                f"File is too large for Telegram bot delivery ({filesize_mb:.1f} MB exceeds 50 MB limit)."
+                f"File is too large for Telegram bot delivery ({filesize_mb:.1f} MB exceeds {config.MAX_FILE_SIZE_MB:.0f} MB limit)."
             )
 
         # Extract crisp thumbnail for video
@@ -795,7 +807,7 @@ class MediaDownloader:
         return {
             "type": out_type,
             "file_path": out_path,
-            "file_paths": [out_path],
+            "file_paths": parts,
             "dir_path": temp_dir,
             "title": safe_name,
             "uploader": "TeraBox",
@@ -803,6 +815,7 @@ class MediaDownloader:
             "thumbnail": file_info.get("thumb"),
             "thumb_file": thumb_file,
             "is_compressed": is_comp,
+            "is_split": is_split,
             "filesize_mb": filesize_mb,
         }
 
@@ -1189,10 +1202,12 @@ class MediaDownloader:
                 matching = [s for h, s in height_to_filesize.items() if h <= height]
                 if matching:
                     mb = max(matching) / (1024 * 1024)
-                    if mb <= 49.5:
+                    if mb <= (config.MAX_FILE_SIZE_MB - 0.5):
                         size_str = f" (~{mb:.1f}MB)"
+                    elif not config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+                        continue  # Exceeds limit and auto-split is disabled
                     else:
-                        continue  # Exceeds Telegram 50MB limit
+                        size_str = f" (~{mb:.1f}MB)"
                 qualities.append({
                     "height": height,
                     "label": f"{label}{size_str}",
@@ -1216,7 +1231,7 @@ class MediaDownloader:
 
     def _compress_video_to_fit(self, input_path: Path, temp_dir: Path, duration: float) -> Optional[Path]:
         """
-        Compress video using FFmpeg to fit under Telegram's 50 MB limit (~46 MB target).
+        Compress video using FFmpeg to fit under the configured maximum limit.
         Calculates optimal video & audio bitrates based on duration.
         """
         if duration <= 0:
@@ -1239,8 +1254,9 @@ class MediaDownloader:
 
         output_path = temp_dir / f"compressed_{input_path.stem}.mp4"
 
-        # Target: 45.5 MB (safe margin for Telegram 50 MB limit)
-        target_size_bits = 45.5 * 1024 * 1024 * 8
+        # Target size safely under configured limit
+        target_mb = 45.5 if config.MAX_FILE_SIZE_MB <= 50 else min(config.MAX_FILE_SIZE_MB - 5.0, 1950.0)
+        target_size_bits = target_mb * 1024 * 1024 * 8
         total_bitrate = int(target_size_bits / duration)
 
         audio_bitrate = min(96000, max(48000, int(total_bitrate * 0.15)))
@@ -1267,17 +1283,75 @@ class MediaDownloader:
         ]
 
         try:
-            logger.info("Compressing video (%s) to fit 50MB (bitrate: %d bps)...", input_path.name, video_bitrate)
+            logger.info("Compressing video (%s) to fit %.0fMB (bitrate: %d bps)...", input_path.name, config.MAX_FILE_SIZE_MB, video_bitrate)
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=120)
             if output_path.exists() and output_path.stat().st_size > 0:
                 compressed_size_mb = output_path.stat().st_size / (1024 * 1024)
-                if compressed_size_mb <= 49.5:
+                if compressed_size_mb <= (config.MAX_FILE_SIZE_MB - 0.5):
                     logger.info("Auto-compression succeeded: %.1f MB", compressed_size_mb)
                     return output_path
         except Exception as e:
             logger.warning("Auto-compression failed: %s", e)
 
         return None
+
+    def _split_video_into_parts(
+        self,
+        input_path: Path,
+        temp_dir: Path,
+        target_part_size_mb: Optional[float] = None,
+        duration: float = 0,
+    ) -> List[Path]:
+        """
+        Split an oversized video into seamless playable segments using FFmpeg stream copy (-c copy).
+        Runs in ~1-2 seconds with zero quality loss.
+        """
+        if not input_path.exists():
+            return []
+
+        limit_mb = target_part_size_mb or (config.MAX_FILE_SIZE_MB - 2.0)
+        filesize_mb = input_path.stat().st_size / (1024 * 1024)
+        if filesize_mb <= limit_mb:
+            return [input_path]
+
+        if duration <= 0:
+            try:
+                cmd = [FFMPEG_EXE, "-i", str(input_path)]
+                proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=10)
+                m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", proc.stderr)
+                if m:
+                    h, mn, s = m.groups()
+                    duration = int(h) * 3600 + int(mn) * 60 + float(s)
+            except Exception:
+                duration = 0
+
+        num_parts = max(2, int(math.ceil(filesize_mb / limit_mb)))
+        segment_time = max(30, int((duration / num_parts) * 0.95)) if duration > 0 else 300
+
+        split_pattern = temp_dir / f"part_%03d_{input_path.name}"
+        cmd = [
+            FFMPEG_EXE,
+            "-y",
+            "-i", str(input_path),
+            "-c", "copy",
+            "-map", "0",
+            "-f", "segment",
+            "-segment_time", str(segment_time),
+            "-reset_timestamps", "1",
+            str(split_pattern),
+        ]
+
+        try:
+            logger.info("Splitting %s into parts (~%d sec segments) to fit limit...", input_path.name, segment_time)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=180)
+            parts = sorted(list(temp_dir.glob(f"part_*_{input_path.name}")))
+            if parts:
+                logger.info("Successfully split video into %d parts", len(parts))
+                return parts
+        except Exception as e:
+            logger.warning("Video splitting failed: %s", e)
+
+        return [input_path]
 
     def _download_ytdlp(
         self,
@@ -1447,13 +1521,15 @@ class MediaDownloader:
         filesize_mb = filesize / (1024 * 1024)
         duration = (info or {}).get("duration", 0)
         is_compressed = False
+        is_split = False
 
-        # Check Telegram 50 MB limit: attempt smart compression if video exceeds limit
-        if filesize_mb > 50:
+        # Check Telegram file limit: attempt smart compression or auto-splitting
+        if filesize_mb > config.MAX_FILE_SIZE_MB:
             if media_type == "video":
                 logger.info(
-                    "Video size (%.1f MB) exceeds Telegram 50 MB limit; attempting auto-compression...",
+                    "Video size (%.1f MB) exceeds limit (%.0f MB); attempting auto-compression...",
                     filesize_mb,
+                    config.MAX_FILE_SIZE_MB,
                 )
                 compressed = self._compress_video_to_fit(target_file, temp_dir, duration)
                 if compressed and compressed.exists():
@@ -1461,16 +1537,28 @@ class MediaDownloader:
                     out_files = [target_file]
                     filesize_mb = target_file.stat().st_size / (1024 * 1024)
                     is_compressed = True
+                elif config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+                    split_parts = self._split_video_into_parts(target_file, temp_dir, duration=duration)
+                    if len(split_parts) > 1:
+                        out_files = split_parts
+                        target_file = split_parts[0]
+                        is_split = True
+                        logger.info("Auto-split video into %d parts", len(split_parts))
+                    else:
+                        dur_mins = int(duration // 60) if duration else 0
+                        dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
+                        raise DownloaderError(
+                            f"Original video is {filesize_mb:.1f} MB, which exceeds the {config.MAX_FILE_SIZE_MB:.0f} MB limit{dur_msg}."
+                        )
                 else:
                     dur_mins = int(duration // 60) if duration else 0
                     dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
                     raise DownloaderError(
-                        f"Original video is {filesize_mb:.1f} MB, which exceeds Telegram's 50 MB bot limit{dur_msg}, "
-                        f"and could not be compressed without severe quality degradation."
+                        f"Original video is {filesize_mb:.1f} MB, which exceeds the {config.MAX_FILE_SIZE_MB:.0f} MB limit{dur_msg}."
                     )
             else:
                 raise DownloaderError(
-                    f"Media size is {filesize_mb:.1f} MB, which exceeds Telegram's 50 MB bot upload limit."
+                    f"Media size is {filesize_mb:.1f} MB, which exceeds the {config.MAX_FILE_SIZE_MB:.0f} MB limit."
                 )
 
         title = (info or {}).get("title", "Video")
@@ -1498,6 +1586,7 @@ class MediaDownloader:
             "width": width,
             "height": height,
             "is_compressed": is_compressed,
+            "is_split": is_split,
             "filesize_mb": filesize_mb,
         }
 
@@ -1700,9 +1789,9 @@ class MediaDownloader:
         target_file = mp3_files[0]
         filesize_mb = target_file.stat().st_size / (1024 * 1024)
 
-        if filesize_mb > 50:
+        if filesize_mb > config.MAX_FILE_SIZE_MB:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            raise DownloaderError(f"Audio file is too large for Telegram ({filesize_mb:.1f} MB > 50 MB limit).")
+            raise DownloaderError(f"Audio file is too large for Telegram ({filesize_mb:.1f} MB > {config.MAX_FILE_SIZE_MB:.0f} MB limit).")
 
         # Process thumbnail for Telegram audio player cover art
         thumb_file = None

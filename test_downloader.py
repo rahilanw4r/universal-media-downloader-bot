@@ -236,6 +236,24 @@ class TestDownloader(unittest.TestCase):
                         self.assertEqual(len(res["file_paths"]), 1)
                         self.assertTrue(res["file_path"].exists())
 
+    def test_api_server_info(self):
+        info = config.get_api_server_info()
+        self.assertIn("is_local", info)
+        self.assertIn("base_url", info)
+        self.assertIn("max_filesize_mb", info)
+        self.assertIn("auto_split", info)
+        self.assertGreaterEqual(info["max_filesize_mb"], 50.0)
+
+    def test_split_video_under_threshold(self):
+        from downloader import MediaDownloader
+        import tempfile
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "tiny.mp4"
+            p.write_bytes(b"dummy video content")
+            parts = d._split_video_into_parts(p, Path(td), target_part_size_mb=50.0)
+            self.assertEqual(parts, [p])
+
 
 if __name__ == "__main__":
     unittest.main()
