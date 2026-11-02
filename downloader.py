@@ -3,10 +3,13 @@ import os
 import re
 import sys
 import html
+import json
+import secrets
 import shutil
 import tempfile
 import logging
 import subprocess
+import http.cookiejar
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 
@@ -30,6 +33,11 @@ try:
     import requests
 except ImportError:
     requests = None
+
+try:
+    import instaloader
+except ImportError:
+    instaloader = None
 
 import config
 
@@ -158,12 +166,13 @@ def sanitize_image_file(image_path: Path) -> Optional[Path]:
                 return None
             if img.mode != "RGB":
                 img = img.convert("RGB")
+            target_path = image_path.with_suffix(".jpg")
             clean_path = image_path.with_suffix(".clean.jpg")
             img.save(clean_path, "JPEG", quality=92, optimize=True)
-            # Replace original with clean file
-            image_path.unlink(missing_ok=True)
-            clean_path.rename(image_path)
-            return image_path
+            if target_path != image_path and image_path.exists():
+                image_path.unlink(missing_ok=True)
+            clean_path.replace(target_path)
+            return target_path
     except Exception as e:
         logger.warning(f"Could not sanitize image {image_path}: {e}")
         try:
@@ -222,7 +231,10 @@ class MediaDownloader:
             "youtube": {
                 "player_client": clients,
                 "player_skip": ["webpage", "configs"],
-            }
+            },
+            "instagram": {
+                "app_id": ["ios", "web"],
+            },
         }
         return opts
 
@@ -489,9 +501,10 @@ class MediaDownloader:
         """
         Download Instagram posts (single photos, multi-image carousels, mixed albums, or reels)
         using multi-strategy extraction:
-        1. Direct API extraction via DDInstagram proxy
-        2. Instagram public embed page scraping
-        3. yt-dlp metadata extraction fallback
+        1. Instaloader engine (with session cookies if available)
+        2. gallery-dl engine (with session cookies if available)
+        3. Instagram public oEmbed API
+        4. Logged-out GraphQL Polaris query
         """
         if not requests:
             return None
@@ -512,58 +525,180 @@ class MediaDownloader:
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-        # Strategy 1: ddinstagram proxy API (handles photos, multi-image carousels, and videos)
+        # Strategy 1: Instaloader Engine (handles photos, multi-image carousels, videos, reels)
+        if instaloader:
+            try:
+                L = instaloader.Instaloader(
+                    download_pictures=True,
+                    download_videos=True,
+                    download_video_thumbnails=False,
+                    save_metadata=False,
+                    compress_json=False,
+                    post_metadata_txt_pattern="",
+                    max_connection_attempts=2,
+                    dirname_pattern=str(temp_dir),
+                )
+                if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
+                    try:
+                        cj = http.cookiejar.MozillaCookieJar(str(config.COOKIES_FILE))
+                        cj.load(ignore_discard=True, ignore_expires=True)
+                        for cookie in cj:
+                            if "instagram.com" in (cookie.domain or ""):
+                                L.context._session.cookies.set_cookie(cookie)
+                    except Exception as ce:
+                        logger.debug("Failed to inject cookies into Instaloader: %s", ce)
+
+                post = instaloader.Post.from_shortcode(L.context, shortcode)
+                caption = post.caption or "Instagram Post"
+                author = post.owner_username or "Instagram"
+
+                L.download_post(post, target="media")
+
+                all_files = sorted([f for f in temp_dir.rglob("*") if f.is_file()], key=lambda f: f.name)
+                media_files: List[Path] = []
+                for f in all_files:
+                    if f.suffix.lower() in VIDEO_EXTS:
+                        media_files.append(f)
+                    elif f.suffix.lower() in IMAGE_EXTS:
+                        valid_img = sanitize_image_file(f)
+                        if valid_img:
+                            media_files.append(valid_img)
+
+                if media_files:
+                    if len(media_files) == 1:
+                        target = media_files[0]
+                        mb = target.stat().st_size / (1024 * 1024)
+                        is_vid = target.suffix.lower() in VIDEO_EXTS
+                        thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_vid else None
+                        return {
+                            "type": "video" if is_vid else "photo",
+                            "file_path": target,
+                            "file_paths": [target],
+                            "dir_path": temp_dir,
+                            "title": caption,
+                            "uploader": author,
+                            "duration": 0,
+                            "thumbnail": None,
+                            "thumb_file": thumb_file,
+                            "filesize_mb": mb,
+                        }
+                    else:
+                        mb = sum(f.stat().st_size for f in media_files) / (1024 * 1024)
+                        return {
+                            "type": "album",
+                            "file_path": media_files[0],
+                            "file_paths": media_files,
+                            "dir_path": temp_dir,
+                            "title": caption,
+                            "uploader": author,
+                            "duration": 0,
+                            "thumbnail": None,
+                            "filesize_mb": mb,
+                        }
+            except Exception as e:
+                logger.debug("Instaloader extraction failed for %s: %s", shortcode, e)
+
+        # Strategy 2: gallery-dl engine
         try:
-            api_url = f"https://api.ddinstagram.com/p/{shortcode}"
-            r = requests.get(api_url, headers=headers, timeout=12)
+            gdl_res = self._download_gallery_dl(url, temp_dir)
+            if gdl_res:
+                return gdl_res
+        except Exception as e:
+            logger.debug("gallery-dl instagram extraction failed for %s: %s", shortcode, e)
+
+        # Strategy 3: Official Instagram public oEmbed API
+        try:
+            oembed_url = f"https://www.instagram.com/api/v1/oembed/?url=https://www.instagram.com/p/{shortcode}/"
+            r = requests.get(oembed_url, headers=headers, timeout=12)
             if r.status_code == 200:
                 data = r.json()
-                item = data.get("item") or {}
-                caption = item.get("caption") or "Instagram Post"
-                author = (item.get("user") or {}).get("username") or "Instagram"
-                media_list: List[tuple] = []
+                caption = data.get("title") or "Instagram Post"
+                author = data.get("author_name") or "Instagram"
+                thumb_url = data.get("thumbnail_url")
+                if thumb_url and "static.cdninstagram.com" not in thumb_url:
+                    fpath = temp_dir / f"ig_{shortcode}.jpg"
+                    resp = requests.get(thumb_url, headers=headers, timeout=20)
+                    if resp.status_code == 200 and resp.content:
+                        with open(fpath, "wb") as f:
+                            f.write(resp.content)
+                        valid_img = sanitize_image_file(fpath)
+                        if valid_img:
+                            mb = valid_img.stat().st_size / (1024 * 1024)
+                            return {
+                                "type": "photo",
+                                "file_path": valid_img,
+                                "file_paths": [valid_img],
+                                "dir_path": temp_dir,
+                                "title": caption,
+                                "uploader": author,
+                                "duration": 0,
+                                "thumbnail": None,
+                                "filesize_mb": mb,
+                            }
+        except Exception as e:
+            logger.debug("Instagram oEmbed API failed for %s: %s", shortcode, e)
 
-                # Handle carousel/multi-media
-                carousel = item.get("carousel") or item.get("media_details") or []
-                if carousel:
-                    for c_item in carousel:
-                        m_url = c_item.get("url") or c_item.get("download_url")
-                        m_type = c_item.get("type") or ("video" if ".mp4" in (m_url or "").lower() else "photo")
-                        if m_url:
-                            media_list.append((m_type, m_url))
-                elif item.get("images"):
-                    for img_url in item.get("images"):
-                        media_list.append(("photo", img_url))
-                elif item.get("videos"):
-                    for vid_url in item.get("videos"):
-                        media_list.append(("video", vid_url))
-                elif item.get("video_url"):
-                    media_list.append(("video", item.get("video_url")))
-                elif item.get("image_url"):
-                    media_list.append(("photo", item.get("image_url")))
+        # Strategy 4: Logged-out GraphQL Polaris query
+        try:
+            variables = {
+                "shortcode": shortcode,
+                "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": False,
+            }
+            lsd = secrets.token_hex(12)
+            gql_data = {
+                "variables": json.dumps(variables, separators=(",", ":")),
+                "doc_id": "27128499623469141",
+                "server_timestamps": "true",
+                "lsd": lsd,
+            }
+            gql_headers = {
+                **headers,
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Fb-Friendly-Name": "PolarisPostRootQuery",
+                "X-Fb-Lsd": lsd,
+                "X-IG-App-ID": "936619743392459",
+            }
+            gr = requests.post("https://www.instagram.com/graphql/query/", data=gql_data, headers=gql_headers, timeout=12)
+            if gr.status_code == 200 and gr.headers.get("content-type", "").startswith("application/json"):
+                gdata = gr.json()
+                media_data = gdata.get("data", {}).get("xdt_shortcode_media") or gdata.get("data", {}).get("shortcode_media")
+                if media_data:
+                    caption = (((media_data.get("edge_media_to_caption") or {}).get("edges") or [{}])[0].get("node") or {}).get("text") or "Instagram Post"
+                    author = (media_data.get("owner") or {}).get("username") or "Instagram"
+                    edges = (media_data.get("edge_sidecar_to_children") or {}).get("edges") or []
+                    items_to_download = []
+                    if edges:
+                        for edge in edges[:10]:
+                            node = edge.get("node") or {}
+                            if node.get("is_video") and node.get("video_url"):
+                                items_to_download.append(("video", node.get("video_url")))
+                            elif node.get("display_url"):
+                                items_to_download.append(("photo", node.get("display_url")))
+                    else:
+                        if media_data.get("is_video") and media_data.get("video_url"):
+                            items_to_download.append(("video", media_data.get("video_url")))
+                        elif media_data.get("display_url"):
+                            items_to_download.append(("photo", media_data.get("display_url")))
 
-                if media_list:
-                    downloaded_files: List[Path] = []
-                    for idx, (m_type, m_url) in enumerate(media_list[:10]):
-                        ext = ".mp4" if m_type == "video" or ".mp4" in m_url.lower() else ".jpg"
-                        fpath = temp_dir / f"ig_{shortcode}_{idx}{ext}"
-                        resp = requests.get(m_url, headers=headers, stream=True, timeout=25)
-                        if resp.status_code == 200:
+                    downloaded: List[Path] = []
+                    for idx, (m_type, m_url) in enumerate(items_to_download):
+                        ext = ".mp4" if m_type == "video" else ".jpg"
+                        fpath = temp_dir / f"ig_gql_{shortcode}_{idx}{ext}"
+                        r_dl = requests.get(m_url, headers=headers, stream=(m_type == "video"), timeout=25)
+                        if r_dl.status_code == 200:
                             with open(fpath, "wb") as f:
-                                for chunk in resp.iter_content(65536):
-                                    if chunk:
-                                        f.write(chunk)
-                            if fpath.exists() and fpath.stat().st_size > 0:
-                                if ext == ".mp4":
-                                    downloaded_files.append(fpath)
-                                else:
-                                    valid_img = sanitize_image_file(fpath)
-                                    if valid_img:
-                                        downloaded_files.append(valid_img)
+                                for chunk in r_dl.iter_content(65536):
+                                    f.write(chunk)
+                            if m_type == "video":
+                                downloaded.append(fpath)
+                            else:
+                                v_img = sanitize_image_file(fpath)
+                                if v_img:
+                                    downloaded.append(v_img)
 
-                    if downloaded_files:
-                        if len(downloaded_files) == 1:
-                            target = downloaded_files[0]
+                    if downloaded:
+                        if len(downloaded) == 1:
+                            target = downloaded[0]
                             mb = target.stat().st_size / (1024 * 1024)
                             is_vid = target.suffix.lower() in VIDEO_EXTS
                             thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_vid else None
@@ -580,11 +715,11 @@ class MediaDownloader:
                                 "filesize_mb": mb,
                             }
                         else:
-                            mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
+                            mb = sum(f.stat().st_size for f in downloaded) / (1024 * 1024)
                             return {
                                 "type": "album",
-                                "file_path": downloaded_files[0],
-                                "file_paths": downloaded_files,
+                                "file_path": downloaded[0],
+                                "file_paths": downloaded,
                                 "dir_path": temp_dir,
                                 "title": caption,
                                 "uploader": author,
@@ -593,111 +728,18 @@ class MediaDownloader:
                                 "filesize_mb": mb,
                             }
         except Exception as e:
-            logger.debug("Instagram DDInstagram API error: %s", e)
-
-        # Strategy 2: Instagram Public Embed Page Scraping
-        try:
-            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-            r = requests.get(embed_url, headers=headers, timeout=12)
-            if r.status_code == 200 and r.text:
-                html_text = r.text
-
-                # Check for video in embed
-                vid_matches = re.findall(r'class="EmbeddedMediaVideo"[^>]*src="([^"]+)"', html_text) or re.findall(
-                    r'"video_url":"([^"]+)"', html_text
-                )
-                if vid_matches:
-                    vid_url = vid_matches[0].replace(r"\/", "/").replace("&amp;", "&")
-                    fpath = temp_dir / f"ig_{shortcode}.mp4"
-                    resp = requests.get(vid_url, headers=headers, stream=True, timeout=30)
-                    if resp.status_code == 200:
-                        with open(fpath, "wb") as f:
-                            for chunk in resp.iter_content(65536):
-                                f.write(chunk)
-                        if fpath.exists() and fpath.stat().st_size > 0:
-                            mb = fpath.stat().st_size / (1024 * 1024)
-                            thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
-                            return {
-                                "type": "video",
-                                "file_path": fpath,
-                                "file_paths": [fpath],
-                                "dir_path": temp_dir,
-                                "title": "Instagram Video",
-                                "uploader": "Instagram",
-                                "duration": 0,
-                                "thumbnail": None,
-                                "thumb_file": thumb_file,
-                                "filesize_mb": mb,
-                            }
-
-                # Check for images in embed
-                img_matches = re.findall(r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"', html_text) or re.findall(
-                    r'"display_url":"([^"]+)"', html_text
-                )
-                if not img_matches:
-                    cdn_matches = re.findall(r'(https://[^"\'\s<>]*cdninstagram\.com/[^"\'\s<>]*)', html_text)
-                    img_matches = [u for u in cdn_matches if "150x150" not in u and "s150x150" not in u]
-
-                if img_matches:
-                    seen_urls = set()
-                    unique_img_urls = []
-                    for u in img_matches:
-                        clean_u = html.unescape(u.replace(r"\/", "/"))
-                        # Filter out icon / thumbnail sizes and non-image media
-                        if any(bad in clean_u.lower() for bad in ("150x150", "s150x150", "s320x320", ".mp4", ".m4a")):
-                            continue
-                        if clean_u not in seen_urls:
-                            seen_urls.add(clean_u)
-                            unique_img_urls.append(clean_u)
-
-                    downloaded_files: List[Path] = []
-                    for idx, img_url in enumerate(unique_img_urls[:10]):
-                        fpath = temp_dir / f"ig_{shortcode}_{idx}.jpg"
-                        resp = requests.get(img_url, headers=headers, timeout=20)
-                        if resp.status_code == 200 and resp.content:
-                            with open(fpath, "wb") as f:
-                                f.write(resp.content)
-                            valid_img = sanitize_image_file(fpath)
-                            if valid_img:
-                                downloaded_files.append(valid_img)
-
-                    if len(downloaded_files) == 1:
-                        mb = downloaded_files[0].stat().st_size / (1024 * 1024)
-                        return {
-                            "type": "photo",
-                            "file_path": downloaded_files[0],
-                            "file_paths": downloaded_files,
-                            "dir_path": temp_dir,
-                            "title": "Instagram Post",
-                            "uploader": "Instagram",
-                            "duration": 0,
-                            "thumbnail": None,
-                            "filesize_mb": mb,
-                        }
-                    elif len(downloaded_files) > 1:
-                        mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
-                        return {
-                            "type": "album",
-                            "file_path": downloaded_files[0],
-                            "file_paths": downloaded_files,
-                            "dir_path": temp_dir,
-                            "title": "Instagram Gallery",
-                            "uploader": "Instagram",
-                            "duration": 0,
-                            "thumbnail": None,
-                            "filesize_mb": mb,
-                        }
-        except Exception as e:
-            logger.debug("Instagram embed scraping error: %s", e)
+            logger.debug("Instagram GraphQL fallback failed for %s: %s", shortcode, e)
 
         return None
 
     def _download_gallery_dl(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
-        """Fallback extractor for image posts/galleries using gallery-dl."""
+        """Fallback extractor for image posts/galleries/carousels using gallery-dl."""
         try:
-            gdl_bin = shutil.which("gallery-dl")
-            if gdl_bin:
-                cmd = [gdl_bin, "--dest", str(temp_dir), "--no-mtime"]
+            user_gdl = Path.home() / ".local" / "bin" / "gallery-dl"
+            if shutil.which("gallery-dl"):
+                cmd = [shutil.which("gallery-dl"), "--dest", str(temp_dir), "--no-mtime"]
+            elif user_gdl.exists():
+                cmd = [str(user_gdl), "--dest", str(temp_dir), "--no-mtime"]
             else:
                 cmd = [sys.executable, "-m", "gallery_dl", "--dest", str(temp_dir), "--no-mtime"]
 
@@ -707,47 +749,46 @@ class MediaDownloader:
             cmd.append(url)
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
 
-            all_files = [f for f in temp_dir.rglob("*") if f.is_file()]
+            all_files = sorted([f for f in temp_dir.rglob("*") if f.is_file()], key=lambda f: f.name)
             vids = [f for f in all_files if f.suffix.lower() in VIDEO_EXTS]
-            imgs = [f for f in all_files if f.suffix.lower() in IMAGE_EXTS]
+            raw_imgs = [f for f in all_files if f.suffix.lower() in IMAGE_EXTS]
+            sanitized_imgs = []
+            for img in raw_imgs:
+                s = sanitize_image_file(img)
+                if s:
+                    sanitized_imgs.append(s)
 
-            if vids:
-                target = vids[0]
+            media_files = sorted(vids + sanitized_imgs, key=lambda f: f.name)
+            if not media_files:
+                return None
+
+            uploader = detect_platform(url)
+            if len(media_files) == 1:
+                target = media_files[0]
                 mb = target.stat().st_size / (1024 * 1024)
+                is_vid = target.suffix.lower() in VIDEO_EXTS
+                thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_vid else None
                 return {
-                    "type": "video",
+                    "type": "video" if is_vid else "photo",
                     "file_path": target,
                     "file_paths": [target],
                     "dir_path": temp_dir,
-                    "title": "Post Video",
-                    "uploader": detect_platform(url),
+                    "title": f"{uploader} Post",
+                    "uploader": uploader,
                     "duration": 0,
                     "thumbnail": None,
+                    "thumb_file": thumb_file,
                     "filesize_mb": mb,
                 }
-            elif len(imgs) > 1:
-                mb = sum(f.stat().st_size for f in imgs) / (1024 * 1024)
+            else:
+                mb = sum(f.stat().st_size for f in media_files) / (1024 * 1024)
                 return {
                     "type": "album",
-                    "file_path": imgs[0],
-                    "file_paths": imgs,
+                    "file_path": media_files[0],
+                    "file_paths": media_files,
                     "dir_path": temp_dir,
-                    "title": "Post Gallery",
-                    "uploader": detect_platform(url),
-                    "duration": 0,
-                    "thumbnail": None,
-                    "filesize_mb": mb,
-                }
-            elif len(imgs) == 1:
-                target = imgs[0]
-                mb = target.stat().st_size / (1024 * 1024)
-                return {
-                    "type": "photo",
-                    "file_path": target,
-                    "file_paths": [target],
-                    "dir_path": temp_dir,
-                    "title": "Post Photo",
-                    "uploader": detect_platform(url),
+                    "title": f"{uploader} Album",
+                    "uploader": uploader,
                     "duration": 0,
                     "thumbnail": None,
                     "filesize_mb": mb,

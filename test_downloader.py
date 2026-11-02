@@ -147,6 +147,64 @@ class TestDownloader(unittest.TestCase):
         self.assertIn("loaded", status)
         self.assertIn("youtube_cookies", status)
 
+    def test_sanitize_image_file(self):
+        from downloader import sanitize_image_file
+        import tempfile
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as td:
+            # Create a simple valid image
+            img_path = Path(td) / "test.png"
+            img = Image.new("RGB", (100, 100), color="blue")
+            img.save(img_path, format="PNG")
+
+            sanitized = sanitize_image_file(img_path)
+            self.assertIsNotNone(sanitized)
+            self.assertTrue(sanitized.exists())
+            self.assertEqual(sanitized.suffix.lower(), ".jpg")
+
+    def test_instagram_oembed_parsing(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+        from downloader import MediaDownloader
+        from PIL import Image
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            # Create a mock valid image payload
+            sample_img = temp_path / "sample.jpg"
+            Image.new("RGB", (50, 50), color="green").save(sample_img, format="JPEG")
+            img_bytes = sample_img.read_bytes()
+
+            mock_oembed_resp = MagicMock()
+            mock_oembed_resp.status_code = 200
+            mock_oembed_resp.json.return_value = {
+                "title": "Beautiful Sunset in Hawaii",
+                "author_name": "traveler_jane",
+                "thumbnail_url": "https://instagram.example.com/sunset.jpg",
+            }
+
+            mock_img_resp = MagicMock()
+            mock_img_resp.status_code = 200
+            mock_img_resp.content = img_bytes
+
+            def mock_requests_get(url, *args, **kwargs):
+                if "oembed" in url:
+                    return mock_oembed_resp
+                return mock_img_resp
+
+            with patch("downloader.instaloader", None):
+                with patch("downloader.requests.get", side_effect=mock_requests_get):
+                    with patch.object(d, "_download_gallery_dl", return_value=None):
+                        res = d._download_instagram("https://www.instagram.com/p/TEST12345/", temp_path)
+                        self.assertIsNotNone(res)
+                        self.assertEqual(res["type"], "photo")
+                        self.assertEqual(res["title"], "Beautiful Sunset in Hawaii")
+                        self.assertEqual(res["uploader"], "traveler_jane")
+                        self.assertEqual(len(res["file_paths"]), 1)
+                        self.assertTrue(res["file_path"].exists())
+
 
 if __name__ == "__main__":
     unittest.main()
