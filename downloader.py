@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 import sys
+import html
 import shutil
 import tempfile
 import logging
@@ -128,6 +129,48 @@ def render_progress_bar(percent: float, width: int = 10) -> str:
 class DownloaderError(Exception):
     """Custom exception for download errors."""
     pass
+
+
+def sanitize_image_file(image_path: Path) -> Optional[Path]:
+    """
+    Validate that image_path is a real, decodable image and convert it to a standard,
+    clean sRGB JPEG. This guarantees Telegram never rejects it with IMAGE_PROCESS_FAILED.
+    """
+    if not image_path or not image_path.exists() or image_path.stat().st_size < 100:
+        return None
+    try:
+        if not Image:
+            return image_path
+        with Image.open(image_path) as img:
+            w, h = img.size
+            if w <= 10 or h <= 10:
+                try:
+                    image_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return None
+            ratio = max(w / h, h / w)
+            if ratio > 20:  # Telegram restricts extreme aspect ratios
+                try:
+                    image_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return None
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            clean_path = image_path.with_suffix(".clean.jpg")
+            img.save(clean_path, "JPEG", quality=92, optimize=True)
+            # Replace original with clean file
+            image_path.unlink(missing_ok=True)
+            clean_path.rename(image_path)
+            return image_path
+    except Exception as e:
+        logger.warning(f"Could not sanitize image {image_path}: {e}")
+        try:
+            image_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
 
 
 class MediaDownloader:
@@ -407,7 +450,9 @@ class MediaDownloader:
                     if r.status_code == 200 and r.content:
                         with open(fpath, "wb") as f:
                             f.write(r.content)
-                        downloaded_files.append(fpath)
+                        valid_img = sanitize_image_file(fpath)
+                        if valid_img:
+                            downloaded_files.append(valid_img)
 
                 if len(downloaded_files) == 1:
                     mb = downloaded_files[0].stat().st_size / (1024 * 1024)
@@ -509,7 +554,12 @@ class MediaDownloader:
                                     if chunk:
                                         f.write(chunk)
                             if fpath.exists() and fpath.stat().st_size > 0:
-                                downloaded_files.append(fpath)
+                                if ext == ".mp4":
+                                    downloaded_files.append(fpath)
+                                else:
+                                    valid_img = sanitize_image_file(fpath)
+                                    if valid_img:
+                                        downloaded_files.append(valid_img)
 
                     if downloaded_files:
                         if len(downloaded_files) == 1:
@@ -592,7 +642,10 @@ class MediaDownloader:
                     seen_urls = set()
                     unique_img_urls = []
                     for u in img_matches:
-                        clean_u = u.replace(r"\/", "/").replace("&amp;", "&")
+                        clean_u = html.unescape(u.replace(r"\/", "/"))
+                        # Filter out icon / thumbnail sizes and non-image media
+                        if any(bad in clean_u.lower() for bad in ("150x150", "s150x150", "s320x320", ".mp4", ".m4a")):
+                            continue
                         if clean_u not in seen_urls:
                             seen_urls.add(clean_u)
                             unique_img_urls.append(clean_u)
@@ -604,8 +657,9 @@ class MediaDownloader:
                         if resp.status_code == 200 and resp.content:
                             with open(fpath, "wb") as f:
                                 f.write(resp.content)
-                            if fpath.stat().st_size > 5000:
-                                downloaded_files.append(fpath)
+                            valid_img = sanitize_image_file(fpath)
+                            if valid_img:
+                                downloaded_files.append(valid_img)
 
                     if len(downloaded_files) == 1:
                         mb = downloaded_files[0].stat().st_size / (1024 * 1024)

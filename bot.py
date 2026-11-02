@@ -562,7 +562,8 @@ async def execute_download(
                                 write_timeout=300,
                             )
                         except Exception as e:
-                            if "parse entities" in str(e).lower():
+                            err_str = str(e).lower()
+                            if "parse entities" in err_str:
                                 f.seek(0)
                                 await context.bot.send_photo(
                                     chat_id=chat_id,
@@ -570,6 +571,15 @@ async def execute_download(
                                     caption=f"🖼️ {title[:100]}\n📁 {platform} • 📦 {filesize_mb:.1f} MB",
                                     read_timeout=300,
                                     write_timeout=300,
+                                )
+                            elif "image_process_failed" in err_str:
+                                logger.warning("send_photo rejected with image_process_failed; falling back to document")
+                                f.seek(0)
+                                await context.bot.send_document(
+                                    chat_id=chat_id,
+                                    document=f,
+                                    caption=caption,
+                                    parse_mode=ParseMode.HTML,
                                 )
                             else:
                                 raise
@@ -606,7 +616,8 @@ async def execute_download(
                                 write_timeout=300,
                             )
                         except Exception as e:
-                            if "parse entities" in str(e).lower():
+                            err_str = str(e).lower()
+                            if "parse entities" in err_str:
                                 for item in media:
                                     item.parse_mode = None
                                     if item.caption:
@@ -619,6 +630,33 @@ async def execute_download(
                                     read_timeout=300,
                                     write_timeout=300,
                                 )
+                            elif "image_process_failed" in err_str or "failed to send message" in err_str:
+                                logger.warning("send_media_group failed with %s; falling back to individual items...", e)
+                                for idx, fp in enumerate(file_paths[:10]):
+                                    item_caption = caption if idx == 0 else None
+                                    with open(fp, "rb") as item_fh:
+                                        try:
+                                            if fp.suffix.lower() in VIDEO_EXTS:
+                                                await context.bot.send_video(
+                                                    chat_id=chat_id,
+                                                    video=item_fh,
+                                                    caption=item_caption,
+                                                    parse_mode=ParseMode.HTML,
+                                                )
+                                            else:
+                                                await context.bot.send_photo(
+                                                    chat_id=chat_id,
+                                                    photo=item_fh,
+                                                    caption=item_caption,
+                                                    parse_mode=ParseMode.HTML,
+                                                )
+                                        except Exception:
+                                            item_fh.seek(0)
+                                            await context.bot.send_document(
+                                                chat_id=chat_id,
+                                                document=item_fh,
+                                                caption=item_caption,
+                                            )
                             else:
                                 raise
                         analytics.track_download(chat_id, platform, "album")
