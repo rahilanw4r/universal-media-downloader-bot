@@ -217,25 +217,21 @@ class MediaDownloader:
             opts["cookiefile"] = str(cookie_file)
             has_cookies = True
 
-        # YouTube client alignment:
-        # If desktop cookies are present, use web clients matching the desktop session.
-        # If no cookies or fallback requested, use ios/android mobile clients which bypass bot gates.
-        if youtube_clients:
-            clients = youtube_clients
-        elif has_cookies:
-            clients = ["web", "mweb"]
-        else:
-            clients = ["ios", "android", "mweb"]
-
         opts["extractor_args"] = {
-            "youtube": {
-                "player_client": clients,
-                "player_skip": ["webpage", "configs"],
-            },
             "instagram": {
                 "app_id": ["ios", "web"],
             },
         }
+        if youtube_clients:
+            opts["extractor_args"]["youtube"] = {
+                "player_client": youtube_clients,
+            }
+        elif not has_cookies:
+            # Mobile and web client fallback when running without authentication cookies
+            opts["extractor_args"]["youtube"] = {
+                "player_client": ["android", "ios", "mweb", "web"],
+            }
+
         return opts
 
     def _extract_video_thumbnail(self, video_path: Path, temp_dir: Path) -> Optional[Path]:
@@ -810,7 +806,9 @@ class MediaDownloader:
             is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
             attempts = [{"use_cookies": True, "clients": None}]
             if is_youtube:
-                attempts.append({"use_cookies": False, "clients": ["ios", "android"]})
+                attempts.append({"use_cookies": False, "clients": None})
+                attempts.append({"use_cookies": False, "clients": ["web", "mweb"]})
+                attempts.append({"use_cookies": False, "clients": ["tv_embedded", "android", "ios"]})
 
             for att in attempts:
                 try:
@@ -931,7 +929,8 @@ class MediaDownloader:
             "-maxrate", f"{int(video_bitrate * 1.3)}",
             "-bufsize", f"{int(video_bitrate * 2)}",
             "-vf", scale_filter,
-            "-preset", "veryfast",
+            "-preset", "ultrafast",
+            "-threads", "0",
             "-c:a", "aac",
             "-b:a", f"{audio_bitrate}",
             "-movflags", "+faststart",
@@ -940,7 +939,7 @@ class MediaDownloader:
 
         try:
             logger.info("Compressing video (%s) to fit 50MB (bitrate: %d bps)...", input_path.name, video_bitrate)
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=300)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=120)
             if output_path.exists() and output_path.stat().st_size > 0:
                 compressed_size_mb = output_path.stat().st_size / (1024 * 1024)
                 if compressed_size_mb <= 49.5:
@@ -1003,8 +1002,9 @@ class MediaDownloader:
 
         attempts = [{"use_cookies": True, "clients": None}]
         if is_youtube:
-            attempts.append({"use_cookies": False, "clients": ["ios", "android"]})
-            attempts.append({"use_cookies": False, "clients": ["mweb", "tv"]})
+            attempts.append({"use_cookies": False, "clients": None})
+            attempts.append({"use_cookies": False, "clients": ["web", "mweb"]})
+            attempts.append({"use_cookies": False, "clients": ["tv_embedded", "android", "ios"]})
 
         info = None
         ytdl_dl_err = None
@@ -1030,7 +1030,7 @@ class MediaDownloader:
             except Exception as err:
                 ytdl_dl_err = err
                 err_str = str(err).lower()
-                is_cookie_or_bot = any(
+                is_retryable = any(
                     k in err_str
                     for k in (
                         "sign in",
@@ -1039,11 +1039,16 @@ class MediaDownloader:
                         "cookie",
                         "login",
                         "429",
+                        "400",
+                        "precondition check failed",
+                        "failed to extract any player response",
+                        "requested format is not available",
+                        "unable to download api page",
+                        "http error",
                         "unavailable",
-                        "private",
                     )
                 )
-                if is_youtube and is_cookie_or_bot and att_idx < len(attempts) - 1:
+                if is_youtube and is_retryable and att_idx < len(attempts) - 1:
                     logger.warning(
                         "YouTube attempt %d failed (%s); retrying with alternative client...",
                         att_idx + 1,
@@ -1290,7 +1295,9 @@ class MediaDownloader:
             is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
             attempts = [{"use_cookies": True, "clients": None}]
             if is_youtube:
-                attempts.append({"use_cookies": False, "clients": ["ios", "android"]})
+                attempts.append({"use_cookies": False, "clients": None})
+                attempts.append({"use_cookies": False, "clients": ["web", "mweb"]})
+                attempts.append({"use_cookies": False, "clients": ["tv_embedded", "android", "ios"]})
 
             for att_idx, att in enumerate(attempts):
                 cur_opts = self._get_ydl_base_opts(
@@ -1321,8 +1328,27 @@ class MediaDownloader:
                     with yt_dlp.YoutubeDL(cur_opts) as ydl:
                         return ydl.extract_info(url, download=True)
                 except Exception as e:
-                    if is_youtube and att_idx < len(attempts) - 1:
-                        logger.warning("Audio download attempt failed (%s), retrying without cookies...", e)
+                    err_str = str(e).lower()
+                    is_retryable = any(
+                        k in err_str
+                        for k in (
+                            "sign in",
+                            "bot",
+                            "confirm you",
+                            "cookie",
+                            "login",
+                            "429",
+                            "400",
+                            "precondition check failed",
+                            "failed to extract any player response",
+                            "requested format is not available",
+                            "unable to download api page",
+                            "http error",
+                            "unavailable",
+                        )
+                    )
+                    if is_youtube and is_retryable and att_idx < len(attempts) - 1:
+                        logger.warning("Audio download attempt failed (%s), retrying with alternative client...", e)
                         continue
                     raise
 
