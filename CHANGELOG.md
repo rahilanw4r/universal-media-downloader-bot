@@ -48,3 +48,4 @@ All notable changes to this project are documented here.
 ### Added
 - **Initial Multi-Platform Downloader:** Core architecture supporting YouTube, Instagram, TikTok, Pinterest, Reddit, Facebook, and 1000+ web platforms via yt-dlp.
 - **Admin & Analytics System:** Added `/stats` tracking, user whitelist filtering, and `/broadcast` announcements.
+

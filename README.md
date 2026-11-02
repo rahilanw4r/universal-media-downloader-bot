@@ -2,16 +2,17 @@
 
 # 📥 Universal Media Downloader Bot
 
-### An open-source, ultra-fast Telegram bot for downloading media, full videos up to 2 GB, and extracting MP3 audio from all major platforms.
+### An open-source, ultra-fast Telegram bot for downloading media, full videos up to 2 GB, and extracting MP3 audio from all major platforms in 100% original quality.
 
+[![Version: 2.5.0](https://img.shields.io/badge/Version-2.5.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10 | 3.11 | 3.12](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v21%2B-blue?logo=telegram)](https://core.telegram.org/bots/api)
 [![yt-dlp](https://img.shields.io/badge/Powered%20By-yt--dlp-red?logo=youtube)](https://github.com/yt-dlp/yt-dlp)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![CI Tests](https://github.com/rahilanw4r/universal-media-downloader-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/rahilanw4r/universal-media-downloader-bot/actions)
+[![Changelog](https://img.shields.io/badge/Changelog-v2.5.0-blueviolet.svg)](CHANGELOG.md)
 
-[Live Bot Demo](https://t.me/UniversalMediaSaverBot) • [Report Bug](.github/ISSUE_TEMPLATE/bug_report.md) • [Request Feature](.github/ISSUE_TEMPLATE/feature_request.md)
+[Live Bot Demo](https://t.me/UniversalMediaSaverBot) • [Changelog](CHANGELOG.md) • [Report Bug](.github/ISSUE_TEMPLATE/bug_report.md) • [Request Feature](.github/ISSUE_TEMPLATE/feature_request.md)
 
 </div>
 
@@ -22,7 +23,7 @@
 | Platform | Supported Content | Highlights |
 |---|---|---|
 | 🎥 **YouTube** | Shorts, Full Videos, Live Recordings | 1080p, 720p, 480p, 360p, MP3 |
-| 📸 **Instagram** | Reels, Posts, Carousels, Stories | Multi-item albums, HD audio |
+| 📸 **Instagram** | Reels, Posts, Carousels, Stories | Multi-item albums, original audio |
 | 📦 **TeraBox / EBox** | Shared files & videos (`terabox`, `1024tera`, `freeterabox`, etc.) | Direct link resolution & multi-tier fallback |
 | 🐦 **X (Twitter)** | Videos, Clips, Animated GIFs | Best available stream via fxTwitter/vxTwitter |
 | 🎵 **TikTok** | Videos & Sounds | Clean watermark-free MP4 |
@@ -36,7 +37,8 @@
 ## ✨ Key Features
 
 - **🚀 2,000 MB (2 GB) Upload Capability:** Supports Telegram's official Local Bot API server (`telegram-bot-api`) to send videos and files up to **2 GB (2,000 MB)**.
-- **✂️ Zero-Loss Video Auto-Splitting:** If a video exceeds the upload limit, it is automatically sliced into seamless parts (`Part 1/N`, `Part 2/N`) using FFmpeg stream copy (`-c copy`) in 1–2 seconds with **100% original visual & audio quality**.
+- **💎 100% Original Quality (No Lossy Compression):** All media is delivered in its untouched, full original resolution and bitrate. No re-encoding or forced downscaling.
+- **✂️ Zero-Loss Video Auto-Splitting:** If a video exceeds the upload limit (50 MB or 2 GB), it is automatically sliced into seamless parts (`Part 1/N`, `Part 2/N`) using FFmpeg stream copy (`-c copy`) in 1–2 seconds with **100% original visual & audio quality preserved**.
 - **🎛️ Dynamic Resolution Picker:** Inspects incoming video streams and provides interactive buttons:
   - `[ 💎 1080p FHD ]` `[ 📺 720p HD ]` `[ 📱 480p SD ]` `[ ⚡ 360p Data Saver ]`
 - **⚡ Instant Zero-Click Mode:** Send `/mode` to switch to Instant Mode. Paste any link and receive the video immediately with **zero extra clicks**!
@@ -53,7 +55,23 @@
   - `/stats` (or `/analytics`): Total registered users, 24h & 7d active users, total downloads, and platform breakdown.
   - `/broadcast <message>`: Admin announcement broadcasting directly to all registered users.
   - `/cookies`: Diagnostic status for YouTube, Instagram, and TeraBox sessions, with in-chat document updates.
+  - `/changelog`: View version release history and new features directly in Telegram.
 - **👥 Group Chat Ready:** Add the bot to any Telegram group chat with the 1-tap `[➕ Add Me to Your Group]` button in `/start`!
+
+---
+
+## ⚙️ Configuration Reference (`.env`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | *Required* | Bot API Token from [@BotFather](https://t.me/BotFather) |
+| `LOCAL_BOT_API_URL` | *Empty* | Set to `http://localhost:8081` to unlock **2 GB** uploads |
+| `MAX_FILE_SIZE_MB` | `2000` (Local) / `50` (Cloud) | Maximum upload file size in megabytes |
+| `AUTO_SPLIT_OVERSIZED_VIDEOS` | `true` | Auto-split oversized videos with zero quality loss |
+| `ENABLE_VIDEO_COMPRESSION` | `false` | Enable lossy FFmpeg compression (Default: `false` for 100% original quality) |
+| `FORCE_SUB_CHANNEL` | `@Bootscreen` | Required channel membership gate (leave empty to disable) |
+| `ALLOWED_TELEGRAM_USER_IDS` | *Empty* | Whitelist user IDs (comma-separated). Empty allows everyone |
+| `ADMIN_ID` | *Empty* | Telegram user ID of the admin for privileged commands |
 
 ---
 
@@ -159,6 +177,7 @@ Join [@BootScreenCommunity](https://t.me/BootScreenCommunity) for user discussio
 | `/stop` (alias: `/cancel`) | Abort active download task or cancel quality picker |
 | `/stats` (alias: `/analytics`) | View bot usage analytics & platform breakdown |
 | `/cookies` | View platform authentication diagnostics & update cookies |
+| `/changelog` | View release history and new features |
 | `/broadcast <message>` | Admin-only broadcast message to registered users |
 | `/contact` (alias: `/admin`) | Contact the bot developer & admin directly (@RahilAnw4r) |
 | `/about` | Technical specs, engine versions, and architecture |
