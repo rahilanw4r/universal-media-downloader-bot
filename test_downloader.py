@@ -238,10 +238,14 @@ class TestDownloader(unittest.TestCase):
 
     def test_api_server_info(self):
         info = config.get_api_server_info()
+        self.assertIn("version", info)
+        self.assertEqual(info["version"], "2.5.0")
         self.assertIn("is_local", info)
         self.assertIn("base_url", info)
         self.assertIn("max_filesize_mb", info)
         self.assertIn("auto_split", info)
+        self.assertIn("compression_enabled", info)
+        self.assertFalse(info["compression_enabled"])
         self.assertGreaterEqual(info["max_filesize_mb"], 50.0)
 
     def test_split_video_under_threshold(self):

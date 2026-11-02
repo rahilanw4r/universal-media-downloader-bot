@@ -762,10 +762,10 @@ class MediaDownloader:
         is_img = out_path.suffix.lower() in IMAGE_EXTS
         is_comp = False
 
-        # Attempt compression or splitting if video exceeds configured limit
+        # Attempt optional compression or zero-loss splitting if video exceeds configured limit
         is_split = False
         parts = [out_path]
-        if filesize_mb > config.MAX_FILE_SIZE_MB and is_vid:
+        if filesize_mb > config.MAX_FILE_SIZE_MB and is_vid and config.ENABLE_VIDEO_COMPRESSION:
             logger.info("TeraBox video exceeds %.0fMB (%.1f MB), attempting fast compression...", config.MAX_FILE_SIZE_MB, filesize_mb)
             compressed = self._compress_video_to_fit(out_path, temp_dir, duration=0)
             if compressed and compressed.exists():
@@ -774,7 +774,7 @@ class MediaDownloader:
                 parts = [out_path]
                 is_comp = True
 
-        if filesize_mb > config.MAX_FILE_SIZE_MB and is_vid and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+        if not is_comp and filesize_mb > config.MAX_FILE_SIZE_MB and is_vid and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
             split_parts = self._split_video_into_parts(out_path, temp_dir)
             if len(split_parts) > 1:
                 parts = split_parts
@@ -782,7 +782,7 @@ class MediaDownloader:
                 is_split = True
                 logger.info("Auto-split oversized TeraBox video into %d parts", len(parts))
 
-        if not is_split and filesize_mb > config.MAX_FILE_SIZE_MB:
+        if not is_split and not is_comp and filesize_mb > config.MAX_FILE_SIZE_MB:
             raise DownloaderError(
                 f"File is too large for Telegram bot delivery ({filesize_mb:.1f} MB exceeds {config.MAX_FILE_SIZE_MB:.0f} MB limit)."
             )
@@ -1523,21 +1523,23 @@ class MediaDownloader:
         is_compressed = False
         is_split = False
 
-        # Check Telegram file limit: attempt smart compression or auto-splitting
+        # Check Telegram file limit: attempt optional compression or zero-loss auto-splitting
         if filesize_mb > config.MAX_FILE_SIZE_MB:
             if media_type == "video":
-                logger.info(
-                    "Video size (%.1f MB) exceeds limit (%.0f MB); attempting auto-compression...",
-                    filesize_mb,
-                    config.MAX_FILE_SIZE_MB,
-                )
-                compressed = self._compress_video_to_fit(target_file, temp_dir, duration)
-                if compressed and compressed.exists():
-                    target_file = compressed
-                    out_files = [target_file]
-                    filesize_mb = target_file.stat().st_size / (1024 * 1024)
-                    is_compressed = True
-                elif config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+                if config.ENABLE_VIDEO_COMPRESSION:
+                    logger.info(
+                        "Video size (%.1f MB) exceeds limit (%.0f MB); attempting compression...",
+                        filesize_mb,
+                        config.MAX_FILE_SIZE_MB,
+                    )
+                    compressed = self._compress_video_to_fit(target_file, temp_dir, duration)
+                    if compressed and compressed.exists():
+                        target_file = compressed
+                        out_files = [target_file]
+                        filesize_mb = target_file.stat().st_size / (1024 * 1024)
+                        is_compressed = True
+
+                if not is_compressed and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
                     split_parts = self._split_video_into_parts(target_file, temp_dir, duration=duration)
                     if len(split_parts) > 1:
                         out_files = split_parts
@@ -1550,7 +1552,7 @@ class MediaDownloader:
                         raise DownloaderError(
                             f"Original video is {filesize_mb:.1f} MB, which exceeds the {config.MAX_FILE_SIZE_MB:.0f} MB limit{dur_msg}."
                         )
-                else:
+                elif not is_compressed:
                     dur_mins = int(duration // 60) if duration else 0
                     dur_msg = f" (~{dur_mins} mins)" if dur_mins > 0 else ""
                     raise DownloaderError(

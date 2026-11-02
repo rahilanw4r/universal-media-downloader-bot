@@ -322,6 +322,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/stats</code> — User count & download analytics\n"
         "• <code>/admin</code> — Contact developer directly\n"
         "• <code>/about</code> — Bot technical specifications\n"
+        "• <code>/changelog</code> — Version history & release notes\n"
         "• <code>/help</code> — Show this manual\n"
         f"{admin_section}\n"
         f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
@@ -430,17 +431,20 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     about_text = (
         "🤖 <b>Universal Media Downloader</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "• <b>Version:</b> 2.1.0 (Cloud Edition)\n"
-        "• <b>Architecture:</b> Python 3.11 • yt-dlp • FFmpeg • Gallery-DL\n"
+        f"• <b>Version:</b> {config.BOT_VERSION}\n"
+        "• <b>Architecture:</b> Python 3.11+ • yt-dlp • FFmpeg • Gallery-DL\n"
         f"• <b>Runtime:</b> Process uptime {analytics.format_uptime()}\n"
-        "• <b>Availability:</b> Built for continuous operation; uptime depends on hosting provider\n"
+        "• <b>Quality Engine:</b> 100% Original Stream Quality (Lossless Delivery)\n"
         f"• <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n\n"
         "High-performance media extractor built for speed, quality, and simplicity."
     )
 
     keyboard = [
         [
+            InlineKeyboardButton("📜 Changelog", callback_data="show_changelog"),
             InlineKeyboardButton("💬 Contact Admin", url=config.ADMIN_LINK),
+        ],
+        [
             InlineKeyboardButton("⚡ Switch Mode", callback_data="toggle_mode"),
         ]
     ]
@@ -451,6 +455,31 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
     )
+
+
+async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /changelog command - Displays recent updates and version history."""
+    if not await check_user_auth(update, context):
+        return
+
+    text = (
+        f"📜 <b>Changelog — Universal Media Downloader v{config.BOT_VERSION}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>v2.5.0 (Latest):</b>\n"
+        "• 🚀 <b>Local Bot API (2 GB Uploads):</b> Support for self-hosted Bot API server.\n"
+        "• ✂️ <b>Zero-Loss Auto-Split:</b> Videos exceeding limit split with zero quality loss.\n"
+        "• 📦 <b>TeraBox / EBox:</b> Direct extraction for TeraBox and mirror domains.\n"
+        "• 🛑 <b>Task Cancellation:</b> Added /stop and /cancel commands.\n"
+        "• 💎 <b>100% Original Quality:</b> Disabled lossy re-encoding by default.\n"
+        "• 📱 <b>Termux & Render:</b> Native support and deployment blueprints.\n\n"
+        "<b>v2.4.0:</b>\n"
+        "• 🍪 <b>Platform Diagnostics:</b> Added /cookies command & live file reload.\n"
+        "• 🔧 <b>YouTube Extraction Fix:</b> Solved player response issue with mobile bypass.\n\n"
+        "<b>v2.3.0:</b>\n"
+        "• 🎛️ <b>Resolution Picker:</b> 1080p, 720p, 480p, 360p selection.\n"
+        "• 📊 <b>Live Progress Bar:</b> Real-time speed, bytes, and ETA."
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1136,6 +1165,28 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await query.answer()
 
+    # Show Changelog
+    if data == "show_changelog":
+        changelog_text = (
+            f"📜 <b>Changelog — Universal Media Downloader v{config.BOT_VERSION}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>v2.5.0 (Latest):</b>\n"
+            "• 🚀 <b>2 GB Local Bot API:</b> Support for self-hosted Bot API.\n"
+            "• ✂️ <b>Zero-Loss Auto-Split:</b> 100% quality stream copy splitting.\n"
+            "• 📦 <b>TeraBox / EBox:</b> Direct resolution for all mirror domains.\n"
+            "• 🛑 <b>Task Cancellation:</b> /stop and /cancel commands.\n"
+            "• 💎 <b>Lossless Delivery:</b> Disabled lossy re-encoding by default.\n"
+            "• 📱 <b>Termux & Render:</b> Native setup blueprints.\n\n"
+            "<b>v2.4.0:</b>\n"
+            "• 🍪 <b>Platform Diagnostics:</b> Added /cookies command.\n"
+            "• 🔧 <b>YouTube Fix:</b> Mobile client bypass for player response.\n\n"
+            "<b>v2.3.0:</b>\n"
+            "• 🎛️ <b>Resolution Picker:</b> 1080p, 720p, 480p selection.\n"
+            "• 📊 <b>Live Progress Bar:</b> Real-time speed and ETA."
+        )
+        await query.message.reply_text(changelog_text, parse_mode=ParseMode.HTML)
+        return
+
     # 1. Toggle Mode Setting
     if data == "toggle_mode":
         current_mode = config.get_user_mode(user_id)
@@ -1647,6 +1698,7 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("contact", admin_command))
     app.add_handler(CommandHandler("about", about_command))
+    app.add_handler(CommandHandler("changelog", changelog_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("analytics", stats_command))
     app.add_handler(CommandHandler("stop", stop_command))

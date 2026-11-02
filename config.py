@@ -21,6 +21,9 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 
+# Application Version
+BOT_VERSION = "2.5.0"
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
 # Admin contact information
@@ -42,8 +45,11 @@ try:
 except ValueError:
     MAX_FILE_SIZE_MB = _default_max_size
 
-# Automatically split oversized videos into seamless parts instead of failing
+# Automatically split oversized videos into seamless parts with zero quality loss
 AUTO_SPLIT_OVERSIZED_VIDEOS = os.getenv("AUTO_SPLIT_OVERSIZED_VIDEOS", "true").lower() in ("1", "true", "yes")
+
+# Optional lossy compression (Default: False to preserve 100% original quality)
+ENABLE_VIDEO_COMPRESSION = os.getenv("ENABLE_VIDEO_COMPRESSION", "false").lower() in ("1", "true", "yes")
 
 # Forced channel membership (set to empty or "none" to disable)
 FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "@Bootscreen").strip()
@@ -213,11 +219,13 @@ def get_api_server_info() -> Dict[str, Any]:
     """Get diagnostic information about the Telegram Bot API server and file limits."""
     is_local = bool(LOCAL_BOT_API_URL)
     return {
+        "version": BOT_VERSION,
         "is_local": is_local,
         "base_url": LOCAL_BOT_API_URL if is_local else "https://api.telegram.org",
         "local_mode": LOCAL_BOT_API_LOCAL_MODE if is_local else False,
         "max_filesize_mb": MAX_FILE_SIZE_MB,
         "auto_split": AUTO_SPLIT_OVERSIZED_VIDEOS,
+        "compression_enabled": ENABLE_VIDEO_COMPRESSION,
     }
 
 
