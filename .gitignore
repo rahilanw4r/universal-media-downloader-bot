@@ -29,6 +29,10 @@ env/
 
 # Local Downloads & user data
 downloads/
+data/
+*.db
+*.db-wal
+*.db-shm
 user_preferences.json
 bot_stats.json
 

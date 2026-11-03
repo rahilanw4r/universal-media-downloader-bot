@@ -206,10 +206,13 @@ async def require_channel_membership(update: Update, context: ContextTypes.DEFAU
 
 
 async def check_user_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Authorize user, verify channel membership, then record eligible activity."""
+    """Authorize user, verify channel membership, and record user activity immediately."""
     user = update.effective_user
     if not user:
         return False
+
+    # 1. Permanently track user in database immediately (every interaction is recorded forever)
+    analytics.track_user(user.id, user.username, user.first_name)
 
     if not config.is_user_allowed(user.id):
         if update.effective_message:
@@ -221,10 +224,7 @@ async def check_user_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         return False
 
-    allowed = await require_channel_membership(update, context)
-    if allowed:
-        analytics.track_user(user.id, user.username, user.first_name)
-    return allowed
+    return await require_channel_membership(update, context)
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -475,7 +475,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     broadcast_text = " ".join(context.args)
-    user_ids = analytics.get_all_user_ids()
+    user_ids = analytics.get_all_user_ids(include_blocked=False)
 
     if not user_ids:
         await update.message.reply_text("⚠️ <i>No registered users found to broadcast to.</i>", parse_mode=ParseMode.HTML)
@@ -487,6 +487,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
     sent = 0
+    blocked = 0
     failed = 0
     formatted_msg = (
         f"📢 <b>Announcement from Admin</b>\n"
@@ -495,7 +496,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         f"💬 <i>Universal Media Downloader Updates</i>"
     )
 
-    for uid in user_ids:
+    for idx, uid in enumerate(user_ids, 1):
         try:
             await context.bot.send_message(
                 chat_id=uid,
@@ -503,15 +504,47 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 parse_mode=ParseMode.HTML,
             )
             sent += 1
-            await asyncio.sleep(0.05)  # Telegram rate limit friendly
-        except Exception:
-            failed += 1
+            await asyncio.sleep(0.04)  # ~25 msgs/sec safely under Telegram limit
+        except Exception as e:
+            err_str = str(e).lower()
+            if "retry after" in err_str or "flood" in err_str:
+                wait_sec = getattr(e, "retry_after", 5) or 5
+                await asyncio.sleep(float(wait_sec) + 0.5)
+                try:
+                    await context.bot.send_message(
+                        chat_id=uid,
+                        text=formatted_msg,
+                        parse_mode=ParseMode.HTML,
+                    )
+                    sent += 1
+                except Exception:
+                    failed += 1
+            elif "blocked" in err_str or "forbidden" in err_str or "deactivated" in err_str:
+                blocked += 1
+                analytics.mark_user_blocked(uid)
+            else:
+                failed += 1
+
+        # Periodic status update every 25 targets
+        if idx % 25 == 0 or idx == len(user_ids):
+            try:
+                await status_msg.edit_text(
+                    f"⏳ <b>Broadcasting in progress...</b>\n\n"
+                    f"• Progress: {idx}/{len(user_ids)}\n"
+                    f"• Delivered: {sent}\n"
+                    f"• Blocked / Inactive: {blocked}\n"
+                    f"• Errors: {failed}",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
 
     await status_msg.edit_text(
         f"✅ <b>Broadcast Completed!</b>\n\n"
         f"• 👥 <b>Total Targets:</b> {len(user_ids)}\n"
         f"• 📬 <b>Delivered:</b> {sent}\n"
-        f"• ⚠️ <b>Failed / Blocked:</b> {failed}",
+        f"• 🚫 <b>Blocked / Inactive:</b> {blocked}\n"
+        f"• ⚠️ <b>Errors / Failed:</b> {failed}",
         parse_mode=ParseMode.HTML,
     )
 

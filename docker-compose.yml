@@ -28,6 +28,7 @@ services:
       - MAX_FILE_SIZE_MB=2000
       - AUTO_SPLIT_OVERSIZED_VIDEOS=true
     volumes:
+      - ./data:/app/data
       - ./downloads:/app/downloads
       - telegram-api-data:/var/lib/telegram-bot-api
     logging:
