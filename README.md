@@ -12,7 +12,7 @@ A modular Telegram bot for downloading video, photo, audio, and album media from
 
 - **Direct Downloads:** Send any media link; the bot immediately downloads and delivers the file in its highest native resolution and bitrate without lossy re-encoding.
 - **Large File Support (up to 2 GB):** Integrates with self-hosted `telegram-bot-api` to bypass Telegram's default 50 MB cloud bot limit.
-- **Stream-Copy Auto-Splitting:** Videos exceeding file size limits are automatically split into sequential parts using FFmpeg stream copy (`-c copy`) without re-encoding or quality loss.
+- **Stream-Copy Auto-Splitting:** Videos exceeding file size limits are automatically split into sequential parts using FFmpeg stream copy (`-c copy`) without re-encoding.
 - **Audio Extraction:** Convert any video to 192 kbps MP3 with embedded thumbnail album art via `/mp3 <url>` or direct button prompt.
 - **Group Chat Integration:** Add the bot to groups; it automatically processes media links sent by chat members.
 - **Task Management:** Real-time progress updates with cancel support via `/stop` or `/cancel`.

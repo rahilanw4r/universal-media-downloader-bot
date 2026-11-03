@@ -283,7 +283,6 @@ def format_public_dashboard() -> str:
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👥 <b>Registered users:</b> <code>{total_users:,}</code>\n"
         f"📥 <b>Recorded downloads:</b> <code>{total_downloads:,}</code>\n"
-        "⚡ <b>Supported:</b> Instagram, YouTube, TikTok, Pinterest, X, Reddit & 1,000+ sites\n"
-        "🚀 <b>Quality:</b> Best available source quality; no intentional recompression.\n\n"
+        "⚡ <b>Supported:</b> Instagram, YouTube, TikTok, Pinterest, X, Reddit & 1,000+ sites\n\n"
         "💬 <i>Enjoying the bot? Share it with friends or add it to your group chats!</i>"
     )

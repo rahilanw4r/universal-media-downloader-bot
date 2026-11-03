@@ -10,7 +10,7 @@ All notable changes to this project are documented here.
 - **DiskWala Configuration:** Added `DISKWALA_API_KEY` and `DISKWALA_API_URL` to `config.py` for optional private/third-party API extraction.
 
 ### Removed
-- **Quality Picker & `/mode` Command:** Removed resolution picker buttons and `/mode` toggle command in favor of permanent, instant 100% original lossless stream delivery with zero extra clicks.
+- **Streamlined Interaction:** Removed redundant interaction menus and `/mode` command for direct, automatic media delivery.
 
 ### Fixed
 - **TeraBox "Downloading from X" Bug:** Resolved platform conflict where `"x.com"` matched `"terabox.com"` as a substring in `PLATFORM_DOMAINS` and `is_twitter_url()`.
@@ -22,14 +22,14 @@ All notable changes to this project are documented here.
 
 ### Added
 - **Local Bot API (2 GB Uploads):** Added support for self-hosted `telegram-bot-api` to bypass Telegram's 50 MB limit and upload files up to 2,000 MB (2 GB).
-- **Zero-Loss Video Auto-Splitting:** Added `_split_video_into_parts` using FFmpeg stream copy (`-c copy`) to seamlessly slice oversized videos with 100% original visual & audio quality preserved.
+- **Video Auto-Splitting:** Added `_split_video_into_parts` using FFmpeg stream copy (`-c copy`) to seamlessly slice oversized videos without re-encoding.
 - **TeraBox / EBox Downloader:** Added full support for TeraBox and mirror domains (`terabox.com`, `1024tera.com`, `freeterabox.com`, etc.) with multi-tier link resolution.
-- **Task Cancellation:** Added `/stop` and `/cancel` commands to abort running download tasks and clear pending quality picker menus.
+- **Task Cancellation:** Added `/stop` and `/cancel` commands to abort running download tasks and clear active sessions.
 - **Changelog Tracking:** Added `/changelog` command in-bot and `CHANGELOG.md` for version release tracking.
 - **Deployment Blueprints:** Added native deployment support for Docker, Koyeb, and Render (`render.yaml`).
 
 ### Changed
-- **Removed Default Video Compression:** Disabled lossy re-encoding by default; all videos and photos now deliver in 100% full original quality.
+- **Direct Source Streams:** Disabled lossy re-encoding by default; media is delivered as direct source streams.
 - **Centralized Versioning:** Added `BOT_VERSION` in `config.py` referenced across `/about` and diagnostics.
 - **Dependency Upgrades:** Bumped minimum dependency constraints across `requirements.txt` (`python-telegram-bot>=21.0`, `yt-dlp>=2026.10.26`, etc.).
 
@@ -53,7 +53,7 @@ All notable changes to this project are documented here.
 ## [2.3.0] - 2026-10-30
 
 ### Added
-- **Interactive Resolution Picker:** Added dynamic resolution buttons (`1080p`, `720p`, `480p`, `360p`) and one-click `/mode` toggle for instant downloads.
+- **Format Selection Engine:** Added multi-format resolution parsing and direct download options.
 - **Live Animated Progress Bar:** Added real-time Telegram progress bar with speed, downloaded bytes, and ETA.
 - **Studio MP3 Extractor:** Added `/mp3` and `/audio` command with embedded cover art.
 

@@ -68,7 +68,7 @@ def get_download_semaphore() -> asyncio.Semaphore:
         download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
     return download_semaphore
 
-# Active URL sessions for inline quality buttons and quick actions
+# Active URL sessions for quick actions
 url_sessions: Dict[str, Dict[str, Any]] = {}
 
 
@@ -239,12 +239,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     welcome_text = (
         f"👋 <b>Hello, {html.escape(user.first_name)}!</b>\n\n"
         f"Welcome to <b>Universal Media Downloader</b> 📥\n"
-        f"Download videos, photos, carousels & audio from <b>Instagram, YouTube, TikTok, X (Twitter), TeraBox, DiskWala, Pinterest, Reddit</b> & 1,000+ sites in <b>100% original quality</b>.\n\n"
-        f"💎 <b>Quality:</b> <code>100% Original (Lossless Stream Delivery)</code>\n\n"
+        f"Download videos, photos, carousels & audio from <b>Instagram, YouTube, TikTok, X (Twitter), TeraBox, DiskWala, Pinterest, Reddit</b> & 1,000+ sites.\n\n"
         f"👥 <b>Works in Group Chats!</b>\n"
         f"Add me to any group chat and I'll automatically download and send every media link shared by members!\n\n"
         f"📌 <b>Quick Commands:</b>\n"
-        f"• <b>Paste any link</b> — Auto-download in original quality\n"
+        f"• <b>Paste any link</b> — Auto-download media\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
         f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
@@ -298,9 +297,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "📥 <b>How to Download:</b>\n"
         "1. Send or forward any public video, photo, or album link.\n"
-        "2. The bot immediately downloads and delivers the file in 100% original quality.\n\n"
-        "💎 <b>100% Original Quality:</b>\n"
-        "All media is delivered in its untouched, full original resolution and bitrate with zero lossy compression.\n\n"
+        "2. The bot automatically downloads and delivers the media file directly to your chat.\n\n"
         "🎵 <b>Audio Extraction (<code>/mp3</code>):</b>\n"
         "• Send <code>/mp3 &lt;link&gt;</code> to extract 192k audio with official album art.\n"
         "• Or tap <b>Extract MP3</b> directly under any sent video!\n\n"
@@ -374,9 +371,8 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <b>Version:</b> {config.BOT_VERSION}\n"
         "• <b>Architecture:</b> Python 3.11+ • yt-dlp • FFmpeg • Gallery-DL\n"
         f"• <b>Runtime:</b> Process uptime {analytics.format_uptime()}\n"
-        "• <b>Quality Engine:</b> 100% Original Stream Quality (Lossless Delivery)\n"
         f"• <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>\n\n"
-        "High-performance media extractor built for speed, quality, and simplicity."
+        "High-performance media extractor built for speed and reliability."
     )
 
     row = []
@@ -403,11 +399,9 @@ def get_changelog_text() -> str:
         "  Direct high-speed engine resolving ISP & regional network blocks. Delivers HD videos without watermarks, full photo carousel albums, and pristine 192kbps MP3 audio.\n\n"
         "• 📦 <b>DiskWala & TeraBox Overhaul:</b>\n"
         "  Full integration for DiskWala (diskwala.com, playdiskwala.in, diskwala.fun across /app, /s, /c) with direct stream resolvers. Overhauled TeraBox engine with fast redirect resolution, jsToken extraction, and NDUS session cookies.\n\n"
-        "• 💎 <b>100% Original Quality (Lossless Delivery):</b>\n"
-        "  Eliminated lossy transcoding. Media files and streams are delivered in untouched native bitrates and resolutions.\n\n"
-        "• 🛑 <b>Instant Task Cancellation:</b>\n"
-        "  Added <code>/stop</code> and <code>/cancel</code> commands to instantly abort running downloads and clean up active sessions.\n\n"
-        "• ⚡ <b>2 GB Uploads & Zero-Loss Splitting:</b>\n"
+        "• 🛑 <b>Task Cancellation:</b>\n"
+        "  Added <code>/stop</code> and <code>/cancel</code> commands to abort running downloads and clean up active sessions.\n\n"
+        "• ⚡ <b>2 GB Uploads & Stream Splitting:</b>\n"
         "  Seamless Local Bot API integration with automated FFmpeg stream-copy splitting for large media files exceeding limits.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "💡 <i>Tip: Forward this announcement directly to your community group or broadcast it to users with /broadcast!</i>"
@@ -762,7 +756,7 @@ async def execute_download(
                                 part_caption = (
                                     f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n"
                                     f"📁 {html.escape(platform)}{res_str} • 📦 {part_size_mb:.1f} MB\n"
-                                    f"✂️ <i>Auto-split for 100% original quality delivery</i>"
+                                    f"✂️ <i>Auto-split video delivery</i>"
                                 )
                                 if bot_handle:
                                     part_caption += f"\n🤖 {html.escape(bot_handle)}"
@@ -1015,7 +1009,7 @@ async def execute_download(
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle links based on user preference (Instant download vs Interactive Quality Picker)."""
+    """Extract links from user messages and trigger media download."""
     if not await check_user_auth(update, context):
         return
 
@@ -1163,10 +1157,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             if res_num.isdigit() and int(res_num) > 0:
                 resolution = int(res_num)
 
-        res_label = f"{resolution}p" if resolution else "Best Quality"
+        res_label = f" ({resolution}p)" if resolution else ""
 
         status_msg = await query.message.reply_text(
-            f"⏳ <b>Starting {res_label} download from {html.escape(platform)}...</b>",
+            f"⏳ <b>Starting download from {html.escape(platform)}{res_label}...</b>",
             parse_mode=ParseMode.HTML,
         )
         try:
@@ -1249,7 +1243,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if chat_id != user.id:
         cancelled += cancel_user_tasks(chat_id)
 
-    # 2. Clear any pending quality picker sessions
+    # 2. Clear any pending download sessions
     cleared_sessions = 0
     to_remove = [sid for sid, d in url_sessions.items() if d.get("user_id") in (user.id, chat_id)]
     for sid in to_remove:
@@ -1398,7 +1392,7 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "📤 <b>How to Update Cookies:</b>\n"
         "1. Export your cookies using the <b>'Get cookies.txt LOCALLY'</b> browser extension.\n"
         "2. Send or forward the <code>cookies.txt</code> file directly to this chat.\n"
-        "3. The bot validates and activates it instantly with zero downtime!"
+        "3. The bot validates and activates it with zero downtime!"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 

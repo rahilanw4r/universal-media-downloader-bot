@@ -45,7 +45,7 @@ if ADMIN_ID:
 # Leave empty or unset to use official Telegram Cloud API (50 MB upload limit).
 # Set to local server URL (e.g. "http://localhost:8081" or "http://127.0.0.1:8081") to unlock up to 2000 MB (2 GB) uploads!
 LOCAL_BOT_API_URL = os.getenv("LOCAL_BOT_API_URL", "").strip()
-# Set to True if the bot and local Bot API server share filesystem access for instant zero-copy delivery
+# Set to True if the bot and local Bot API server share filesystem access for zero-copy delivery
 LOCAL_BOT_API_LOCAL_MODE = os.getenv("LOCAL_BOT_API_LOCAL_MODE", "false").lower() in ("1", "true", "yes")
 
 # Maximum upload file size in megabytes (Default: 50 MB on official cloud API; 2000 MB if Local Bot API is set)
@@ -55,10 +55,10 @@ try:
 except ValueError:
     MAX_FILE_SIZE_MB = _default_max_size
 
-# Automatically split oversized videos into seamless parts with zero quality loss
+# Automatically split oversized videos into seamless parts
 AUTO_SPLIT_OVERSIZED_VIDEOS = os.getenv("AUTO_SPLIT_OVERSIZED_VIDEOS", "true").lower() in ("1", "true", "yes")
 
-# Optional lossy compression (Default: False to preserve 100% original quality)
+# Optional lossy compression (Default: False)
 ENABLE_VIDEO_COMPRESSION = os.getenv("ENABLE_VIDEO_COMPRESSION", "false").lower() in ("1", "true", "yes")
 
 # Forced channel membership (set to empty or "none" to disable)
@@ -250,31 +250,6 @@ def get_api_server_info() -> Dict[str, Any]:
 # Initialize cookies on module load
 reload_cookies()
 
-# User download preferences (persistent to user_preferences.json)
-_PREFS_FILE = BASE_DIR / "user_preferences.json"
-_user_prefs: Dict[str, Any] = {}
-
-
-def _load_prefs():
-    global _user_prefs
-    if _PREFS_FILE.exists():
-        try:
-            with open(_PREFS_FILE, "r", encoding="utf-8") as f:
-                _user_prefs = json.load(f)
-        except Exception:
-            _user_prefs = {}
-
-
-def _save_prefs():
-    try:
-        with open(_PREFS_FILE, "w", encoding="utf-8") as f:
-            json.dump(_user_prefs, f, indent=2)
-    except Exception:
-        pass
-
-
-_load_prefs()
-
 
 def is_user_allowed(user_id: int) -> bool:
     """Check if the user is authorized to use the bot."""
@@ -294,17 +269,4 @@ def is_admin(user) -> bool:
     if getattr(user, "id", None) and (user.id in ADMIN_USER_IDS or (ADMIN_ID and str(user.id) == ADMIN_ID)):
         return True
     return False
-
-
-def get_user_mode(user_id: int) -> str:
-    """
-    Get user's download mode.
-    Always returns 'instant' (100% original lossless quality delivery with zero extra clicks).
-    """
-    return "instant"
-
-
-def set_user_mode(user_id: int, mode: str) -> None:
-    """Deprecated: Retained for backwards compatibility."""
-    pass
 

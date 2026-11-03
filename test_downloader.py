@@ -128,13 +128,6 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(config.ADMIN_USERNAME, "@RahilAnw4r")
         self.assertIn("RahilAnw4r", config.ADMIN_LINK)
 
-    def test_user_modes(self):
-        uid = 999999
-        # Default and permanent mode is instant (100% original quality)
-        self.assertEqual(config.get_user_mode(uid), "instant")
-        config.set_user_mode(uid, "picker")
-        self.assertEqual(config.get_user_mode(uid), "instant")
-
     def test_admin_check(self):
         admin_user = DummyTelegramUser(id=12345, username="RahilAnw4r")
         self.assertTrue(config.is_admin(admin_user))

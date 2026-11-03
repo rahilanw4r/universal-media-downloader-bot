@@ -1847,8 +1847,7 @@ class MediaDownloader:
 
     async def extract_media_options(self, url: str) -> Dict[str, Any]:
         """
-        Extract available resolutions and metadata for interactive quality buttons.
-        Returns title, uploader, thumbnail, duration, and list of available qualities.
+        Extract media metadata (title, uploader, thumbnail, duration) for the given URL.
         """
         if is_pinterest_url(url):
             url = resolve_pinterest_url(url)
@@ -2045,7 +2044,7 @@ class MediaDownloader:
     ) -> List[Path]:
         """
         Split an oversized video into seamless playable segments using FFmpeg stream copy (-c copy).
-        Runs in ~1-2 seconds with zero quality loss.
+        Runs in ~1-2 seconds without re-encoding.
         """
         if not input_path.exists():
             return []
@@ -2113,9 +2112,7 @@ class MediaDownloader:
                 f"best[height<={resolution}]"
             )
         else:
-            # Instant mode should start from the source's highest available
-            # quality. If the merged file is too large for Telegram, the
-            # size-aware compression step below handles it.
+            # Download the source's highest available stream
             format_spec = "bestvideo+bestaudio/best"
 
         ydl_opts.update({
@@ -2359,7 +2356,7 @@ class MediaDownloader:
             if is_diskwala_url(url):
                 return await asyncio.to_thread(self._download_diskwala, url, temp_dir, progress_callback)
 
-            # 3. Specialized Twitter / X Downloader (instant direct photo/video/album extraction)
+            # 3. Specialized Twitter / X Downloader (direct photo/video/album extraction)
             if is_twitter_url(url):
                 try:
                     tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)
