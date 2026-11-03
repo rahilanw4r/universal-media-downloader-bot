@@ -34,6 +34,12 @@ DISKWALA_API_URL = os.getenv("DISKWALA_API_URL", "").strip()
 ADMIN_USERNAME = "@RahilAnw4r"
 ADMIN_LINK = "https://t.me/RahilAnw4r"
 ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
+ADMIN_USER_IDS = set()
+if ADMIN_ID:
+    for _aid in ADMIN_ID.split(","):
+        _aid = _aid.strip()
+        if _aid.isdigit():
+            ADMIN_USER_IDS.add(int(_aid))
 
 # Telegram Bot API Server Configuration
 # Leave empty or unset to use official Telegram Cloud API (50 MB upload limit).
@@ -273,14 +279,11 @@ def is_admin(user) -> bool:
     """Check if a Telegram user has admin privileges."""
     if not user:
         return False
-    # Check username
+    # Check developer username
     if getattr(user, "username", None) and user.username.lower().replace("@", "") == "rahilanw4r":
         return True
     # Check admin ID from env
-    if ADMIN_ID and str(user.id) == ADMIN_ID:
-        return True
-    # If whitelist is configured, users in it have admin command access
-    if ALLOWED_TELEGRAM_USER_IDS and user.id in ALLOWED_TELEGRAM_USER_IDS:
+    if getattr(user, "id", None) and (user.id in ADMIN_USER_IDS or (ADMIN_ID and str(user.id) == ADMIN_ID)):
         return True
     return False
 

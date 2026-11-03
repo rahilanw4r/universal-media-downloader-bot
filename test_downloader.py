@@ -138,6 +138,14 @@ class TestDownloader(unittest.TestCase):
         normal_user = DummyTelegramUser(id=67890, username="regular_joe")
         self.assertFalse(config.is_admin(normal_user))
 
+        # Whitelisted users should NOT have admin privileges
+        orig_whitelist = list(config.ALLOWED_TELEGRAM_USER_IDS)
+        try:
+            config.ALLOWED_TELEGRAM_USER_IDS = [67890]
+            self.assertFalse(config.is_admin(normal_user))
+        finally:
+            config.ALLOWED_TELEGRAM_USER_IDS = orig_whitelist
+
     def test_analytics(self):
         test_uid = 777888999
         analytics.track_user(test_uid, "tester_bot", "Tester")
