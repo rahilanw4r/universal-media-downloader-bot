@@ -23,7 +23,7 @@ All notable changes to this project are documented here.
 - **TeraBox / EBox Downloader:** Added full support for TeraBox and mirror domains (`terabox.com`, `1024tera.com`, `freeterabox.com`, etc.) with multi-tier link resolution.
 - **Task Cancellation:** Added `/stop` and `/cancel` commands to abort running download tasks and clear pending quality picker menus.
 - **Changelog Tracking:** Added `/changelog` command in-bot and `CHANGELOG.md` for version release tracking.
-- **Deployment Blueprints:** Added native deployment support for Termux (Android) and Render (`render.yaml`).
+- **Deployment Blueprints:** Added native deployment support for Docker, Koyeb, and Render (`render.yaml`).
 
 ### Changed
 - **Removed Default Video Compression:** Disabled lossy re-encoding by default; all videos and photos now deliver in 100% full original quality.

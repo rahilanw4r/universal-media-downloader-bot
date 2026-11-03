@@ -100,32 +100,7 @@ python bot.py
 
 ---
 
-### 2. Termux (Android Phone)
-
-Run your bot 24/7 directly from your Android phone:
-
-```bash
-# Install packages
-pkg update && pkg upgrade -y
-pkg install -y python git ffmpeg clang libjpeg-turbo libpng
-
-# Clone and setup
-git clone https://github.com/rahilanw4r/universal-media-downloader-bot.git
-cd universal-media-downloader-bot
-pip install -r requirements.txt
-
-# Configure credentials
-cp .env.example .env
-nano .env  # Add your TELEGRAM_BOT_TOKEN
-
-# Prevent Android from sleeping and launch
-termux-wake-lock
-python bot.py
-```
-
----
-
-### 3. Docker Deployment (With 2 GB Local Bot API)
+### 2. Docker Deployment (With 2 GB Local Bot API)
 
 Run both the bot and Telegram's Local Bot API Server with 1 command:
 
@@ -141,7 +116,7 @@ docker compose logs -f
 
 ---
 
-### 4. Deploy on Render
+### 3. Deploy on Render
 
 1. Create a new **Web Service** on [Render Dashboard](https://dashboard.render.com).
 2. Connect your GitHub repository.
@@ -155,7 +130,7 @@ docker compose logs -f
 
 ---
 
-### 5. Deploy on Koyeb
+### 4. Deploy on Koyeb
 
 1. Create a new service on [Koyeb](https://www.koyeb.com/).
 2. Select **GitHub** and choose this repository.
