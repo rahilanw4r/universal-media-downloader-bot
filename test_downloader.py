@@ -7,6 +7,7 @@ from downloader import (
     resolve_pinterest_url,
     is_twitter_url,
     is_instagram_url,
+    is_tiktok_url,
     is_terabox_url,
     extract_terabox_surl,
     is_diskwala_url,
@@ -72,6 +73,11 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_instagram_url("https://instagram.com/reel/C-123456/"))
         self.assertTrue(is_instagram_url("https://instagr.am/p/C-123456/"))
         self.assertFalse(is_instagram_url("https://x.com/user/status/123"))
+
+        self.assertTrue(is_tiktok_url("https://www.tiktok.com/@user/video/123456"))
+        self.assertTrue(is_tiktok_url("https://vm.tiktok.com/ZM12345/"))
+        self.assertTrue(is_tiktok_url("https://vt.tiktok.com/ZS12345/"))
+        self.assertFalse(is_tiktok_url("https://youtube.com/watch?v=123"))
 
     def test_diskwala_helpers(self):
         self.assertTrue(is_diskwala_url("https://diskwala.com/app/66fd54e2abc"))

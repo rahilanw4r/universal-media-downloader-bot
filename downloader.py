@@ -1,4 +1,5 @@
 import asyncio
+import time
 import os
 import re
 import sys
@@ -115,6 +116,12 @@ TERABOX_DOMAINS = (
     "tibibox.com",
 )
 
+TIKTOK_DOMAINS = (
+    "tiktok.com",
+    "tiktokv.com",
+    "douyin.com",
+)
+
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 
@@ -157,7 +164,7 @@ def detect_platform(url: str) -> str:
         return "Instagram"
     if any(host == d or host.endswith("." + d) for d in ("youtube.com", "youtu.be")):
         return "YouTube"
-    if any(host == d or host.endswith("." + d) for d in ("tiktok.com",)):
+    if any(host == d or host.endswith("." + d) for d in TIKTOK_DOMAINS):
         return "TikTok"
     if any(host == d or host.endswith("." + d) for d in ("pinterest.com", "pin.it")):
         return "Pinterest"
@@ -208,6 +215,12 @@ def is_instagram_url(url: str) -> bool:
     """Check if URL belongs to Instagram using host matching."""
     host = _get_url_host(url)
     return any(host == d or host.endswith("." + d) for d in ("instagram.com", "instagr.am"))
+
+
+def is_tiktok_url(url: str) -> bool:
+    """Check if URL belongs to TikTok."""
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in TIKTOK_DOMAINS)
 
 
 def is_terabox_url(url: str) -> bool:
@@ -1287,6 +1300,250 @@ class MediaDownloader:
             "filesize_mb": filesize_mb,
         }
 
+    def _download_tiktok(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Download TikTok media using high-speed watermark-free direct API (TikWM)
+        with regional ISP bypass (essential for regions where tiktok.com is blocked).
+        Supports:
+        - Clean watermark-free HD videos
+        - Photo slide/carousel albums
+        - Video title, creator, cover art, and duration
+        """
+        if not requests:
+            return None
+
+        logger.info(f"Extracting TikTok media for {url} via direct bypass API...")
+        api_url = "https://www.tikwm.com/api/"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+        }
+
+        try:
+            resp = requests.post(
+                api_url,
+                data={"url": url, "hd": 1},
+                headers=headers,
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"TikWM API status {resp.status_code}")
+                return None
+
+            data = resp.json()
+            if data.get("code") != 0 or not data.get("data"):
+                logger.warning(f"TikWM API error: {data.get('msg')}")
+                return None
+
+            tt_data = data["data"]
+            vid_id = str(tt_data.get("id") or int(time.time()))
+            title = tt_data.get("title") or "TikTok Media"
+            author = (tt_data.get("author") or {}).get("nickname") or (tt_data.get("author") or {}).get("unique_id") or "TikTok"
+            duration = int(tt_data.get("duration") or 0)
+            cover_url = tt_data.get("cover")
+
+            # 1. Download Cover Art if available
+            thumb_file = None
+            if cover_url:
+                try:
+                    c_resp = requests.get(cover_url, headers=headers, timeout=10)
+                    if c_resp.status_code == 200:
+                        t_path = temp_dir / f"tiktok_thumb_{vid_id}.jpg"
+                        with open(t_path, "wb") as f:
+                            f.write(c_resp.content)
+                        thumb_file = t_path
+                except Exception:
+                    thumb_file = None
+
+            # 2. Check for Photo Carousel / Slide Images
+            images = tt_data.get("images") or []
+            if images:
+                img_paths = []
+                for idx, img_url in enumerate(images):
+                    try:
+                        i_resp = requests.get(img_url, headers=headers, timeout=15)
+                        if i_resp.status_code == 200:
+                            i_path = temp_dir / f"tiktok_{vid_id}_{idx+1}.jpg"
+                            with open(i_path, "wb") as f:
+                                f.write(i_resp.content)
+                            img_paths.append(i_path)
+                    except Exception as e:
+                        logger.debug(f"Failed to download TikTok slide image {idx}: {e}")
+
+                if img_paths:
+                    return {
+                        "type": "album",
+                        "file_paths": img_paths,
+                        "file_path": img_paths[0],
+                        "dir_path": temp_dir,
+                        "title": title,
+                        "uploader": author,
+                        "duration": 0,
+                        "thumbnail": cover_url,
+                        "thumb_file": thumb_file,
+                        "filesize_mb": sum(p.stat().st_size for p in img_paths) / (1024 * 1024),
+                    }
+
+            # 3. Video Download (HD preferred, fallback to standard non-watermarked)
+            video_url = tt_data.get("hdplay") or tt_data.get("play")
+            if not video_url:
+                return None
+
+            video_path = temp_dir / f"tiktok_{vid_id}.mp4"
+            with requests.get(video_url, headers=headers, stream=True, timeout=30) as v_resp:
+                v_resp.raise_for_status()
+                total_bytes = int(v_resp.headers.get("content-length", 0)) or int(tt_data.get("hd_size") or tt_data.get("size") or 0)
+                downloaded = 0
+                start_t = time.time()
+                last_t = start_t
+                last_bytes = 0
+
+                with open(video_path, "wb") as f:
+                    for chunk in v_resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            cur_t = time.time()
+                            if progress_callback and (cur_t - last_t >= 1.5 or (total_bytes and downloaded >= total_bytes)):
+                                elapsed = cur_t - last_t
+                                speed = (downloaded - last_bytes) / elapsed if elapsed > 0 else 0
+                                pct = (downloaded / total_bytes * 100) if total_bytes > 0 else 0
+                                rem = (total_bytes - downloaded) if total_bytes > 0 else 0
+                                eta = rem / speed if speed > 0 else 0
+                                last_t = cur_t
+                                last_bytes = downloaded
+                                progress_callback({
+                                    "percent": pct,
+                                    "downloaded": downloaded,
+                                    "total": total_bytes,
+                                    "speed": speed,
+                                    "eta": eta,
+                                })
+
+            filesize_mb = video_path.stat().st_size / (1024 * 1024)
+            is_split = False
+            parts = [video_path]
+
+            if not thumb_file:
+                thumb_file = self._extract_video_thumbnail(video_path, temp_dir)
+
+            if filesize_mb > config.MAX_FILE_SIZE_MB and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+                split_parts = self._split_video_into_parts(video_path, temp_dir)
+                if len(split_parts) > 1:
+                    parts = split_parts
+                    video_path = split_parts[0]
+                    is_split = True
+
+            return {
+                "type": "video",
+                "file_path": video_path,
+                "file_paths": parts,
+                "dir_path": temp_dir,
+                "title": title,
+                "uploader": author,
+                "duration": duration,
+                "thumbnail": cover_url,
+                "thumb_file": thumb_file,
+                "filesize_mb": filesize_mb,
+                "is_split": is_split,
+            }
+
+        except Exception as e:
+            logger.warning(f"TikTok direct extractor exception: {e}")
+            return None
+
+    def _download_tiktok_audio(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Direct audio extraction for TikTok via TikWM API."""
+        if not requests:
+            return None
+
+        try:
+            api_url = "https://www.tikwm.com/api/"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.post(api_url, data={"url": url}, headers=headers, timeout=12)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if data.get("code") != 0 or not data.get("data"):
+                return None
+
+            tt_data = data["data"]
+            vid_id = str(tt_data.get("id") or int(time.time()))
+            title = tt_data.get("title") or "TikTok Audio"
+            author = (tt_data.get("author") or {}).get("nickname") or "TikTok"
+            music_url = tt_data.get("music") or tt_data.get("play")
+            if not music_url:
+                return None
+
+            # Download audio stream
+            raw_audio_path = temp_dir / f"tiktok_{vid_id}.raw"
+            r = requests.get(music_url, headers=headers, stream=True, timeout=20)
+            if r.status_code != 200:
+                return None
+
+            with open(raw_audio_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=32768):
+                    if chunk:
+                        f.write(chunk)
+
+            # Download thumbnail for album art
+            thumb_file = None
+            cover_url = tt_data.get("cover")
+            if cover_url:
+                try:
+                    c_resp = requests.get(cover_url, headers=headers, timeout=8)
+                    if c_resp.status_code == 200:
+                        thumb_file = temp_dir / f"tiktok_cover_{vid_id}.jpg"
+                        with open(thumb_file, "wb") as f:
+                            f.write(c_resp.content)
+                except Exception:
+                    thumb_file = None
+
+            # Convert to standard 192k MP3 using FFmpeg
+            clean_title = re.sub(r'[\\/*?:"<>|]', "", title)[:40].strip() or "TikTok_Audio"
+            mp3_path = temp_dir / f"{clean_title}.mp3"
+            cmd = [
+                FFMPEG_EXE,
+                "-y",
+                "-i", str(raw_audio_path),
+                "-vn",
+                "-acodec", "libmp3lame",
+                "-b:a", "192k",
+                str(mp3_path),
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=30)
+            try:
+                raw_audio_path.unlink()
+            except Exception:
+                pass
+
+            filesize_mb = mp3_path.stat().st_size / (1024 * 1024)
+            return {
+                "file_path": mp3_path,
+                "thumb_file": thumb_file,
+                "dir_path": temp_dir,
+                "title": title,
+                "uploader": author,
+                "duration": int(tt_data.get("duration") or 0),
+                "filesize_mb": filesize_mb,
+            }
+        except Exception as e:
+            logger.warning(f"TikTok audio direct conversion failed: {e}")
+            return None
+
     def _download_instagram(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """
         Download Instagram posts (single photos, multi-image carousels, mixed albums, or reels)
@@ -2111,7 +2368,16 @@ class MediaDownloader:
                 except Exception as e:
                     logger.warning(f"Twitter engine error, trying fallback: {e}")
 
-            # 2. Specialized Instagram Downloader (photos, multi-image carousels, reels)
+            # 4. Specialized TikTok Downloader (watermark-free direct API with regional ISP bypass)
+            if is_tiktok_url(url):
+                try:
+                    tt_res = await asyncio.to_thread(self._download_tiktok, url, temp_dir, progress_callback)
+                    if tt_res:
+                        return tt_res
+                except Exception as e:
+                    logger.warning(f"TikTok direct engine error, trying fallback: {e}")
+
+            # 5. Specialized Instagram Downloader (photos, multi-image carousels, reels)
             if is_instagram_url(url):
                 try:
                     ig_res = await asyncio.to_thread(self._download_instagram, url, temp_dir)
@@ -2165,6 +2431,15 @@ class MediaDownloader:
             url = resolve_pinterest_url(url)
 
         temp_dir = Path(tempfile.mkdtemp(dir=str(self.download_dir)))
+
+        # Specialized TikTok direct audio extraction (bypasses ISP blocks)
+        if is_tiktok_url(url):
+            try:
+                tt_audio = await asyncio.to_thread(self._download_tiktok_audio, url, temp_dir, progress_callback)
+                if tt_audio:
+                    return tt_audio
+            except Exception as e:
+                logger.warning(f"TikTok direct audio extraction error: {e}")
 
         ydl_opts = self._get_ydl_base_opts()
         ydl_opts.update({
