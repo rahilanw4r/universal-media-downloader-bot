@@ -290,6 +290,39 @@ class TestDownloader(unittest.TestCase):
             parts = d._split_video_into_parts(p, Path(td), target_part_size_mb=50.0)
             self.assertEqual(parts, [p])
 
+    def test_promo_channels_config(self):
+        self.assertTrue(config.PROMO_CHANNELS_ENABLED)
+        self.assertEqual(config.MOD_APK_CHANNEL, "ModRepository")
+        self.assertEqual(config.WALLPAPER_CHANNEL, "WallpapersRepository")
+        self.assertEqual(config.MOD_APK_URL, "https://t.me/ModRepository")
+        self.assertEqual(config.WALLPAPER_URL, "https://t.me/WallpapersRepository")
+
+    def test_promo_helpers(self):
+        try:
+            import bot
+            footer = bot.get_promo_caption_footer()
+            self.assertIn("@ModRepository", footer)
+            self.assertIn("@WallpapersRepository", footer)
+
+            kb = bot.get_media_post_keyboard(vid_session_id="test1234")
+            self.assertIsNotNone(kb)
+            # Row 1 is MP3 button, Row 2 is promo channels
+            self.assertEqual(len(kb.inline_keyboard), 2)
+            self.assertEqual(kb.inline_keyboard[0][0].callback_data, "dl:aud:test1234")
+            self.assertEqual(kb.inline_keyboard[1][0].url, "https://t.me/ModRepository")
+            self.assertEqual(kb.inline_keyboard[1][1].url, "https://t.me/WallpapersRepository")
+
+            # Test without session id (for photo/audio)
+            kb_no_vid = bot.get_media_post_keyboard()
+            self.assertIsNotNone(kb_no_vid)
+            self.assertEqual(len(kb_no_vid.inline_keyboard), 1)
+            self.assertEqual(kb_no_vid.inline_keyboard[0][0].url, "https://t.me/ModRepository")
+            self.assertEqual(kb_no_vid.inline_keyboard[0][1].url, "https://t.me/WallpapersRepository")
+        except ModuleNotFoundError as e:
+            if "telegram" in str(e):
+                self.skipTest("python-telegram-bot not installed in test environment")
+            raise
+
 
 if __name__ == "__main__":
     unittest.main()

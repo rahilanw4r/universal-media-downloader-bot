@@ -105,6 +105,9 @@ cp .env.example .env
 | `DISKWALA_API_KEY` | *Empty* | Optional API key for third-party DiskWala extraction |
 | `DISKWALA_API_URL` | *Empty* | Optional custom DiskWala extractor endpoint |
 | `COOKIES_CONTENT` | *Empty* | Netscape cookie content or Base64 string for YouTube/Instagram authentication |
+| `PROMO_CHANNELS_ENABLED` | `true` | Enable non-forced channel recommendation buttons on media outputs |
+| `MOD_APK_CHANNEL` | `ModRepository` | Telegram username for Mod APK channel recommendation |
+| `WALLPAPER_CHANNEL` | `WallpapersRepository` | Telegram username for Wallpapers channel recommendation |
 
 ---
 

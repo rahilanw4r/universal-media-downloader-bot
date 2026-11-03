@@ -522,6 +522,28 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+def get_promo_caption_footer() -> str:
+    """Return promotional channel footer text for media captions."""
+    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
+        return f"\n\n📢 <b>Join:</b> @{config.MOD_APK_CHANNEL} • @{config.WALLPAPER_CHANNEL}"
+    return ""
+
+
+def get_media_post_keyboard(vid_session_id: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
+    """Build the action and channel promotion keyboard attached to media outputs."""
+    rows = []
+    if vid_session_id:
+        rows.append([
+            InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
+        ])
+    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
+        rows.append([
+            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
+            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
+        ])
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
 async def execute_download(
     chat_id: int,
     status_msg,
@@ -586,6 +608,8 @@ async def execute_download(
                     )
                     if bot_handle:
                         caption += f"\n🤖 {html.escape(bot_handle)}"
+                    caption += get_promo_caption_footer()
+                    photo_keyboard = get_media_post_keyboard()
 
                     with open(file_path, "rb") as f:
                         try:
@@ -594,6 +618,7 @@ async def execute_download(
                                 photo=f,
                                 caption=caption,
                                 parse_mode=ParseMode.HTML,
+                                reply_markup=photo_keyboard,
                                 read_timeout=300,
                                 write_timeout=300,
                             )
@@ -605,6 +630,7 @@ async def execute_download(
                                     chat_id=chat_id,
                                     photo=f,
                                     caption=f"🖼️ {title[:100]}\n📁 {platform} • 📦 {filesize_mb:.1f} MB",
+                                    reply_markup=photo_keyboard,
                                     read_timeout=300,
                                     write_timeout=300,
                                 )
@@ -616,6 +642,7 @@ async def execute_download(
                                     document=f,
                                     caption=caption,
                                     parse_mode=ParseMode.HTML,
+                                    reply_markup=photo_keyboard,
                                 )
                             else:
                                 raise
@@ -631,6 +658,7 @@ async def execute_download(
                     )
                     if bot_handle:
                         caption += f"\n🤖 {html.escape(bot_handle)}"
+                    caption += get_promo_caption_footer()
 
                     media = []
                     open_files = []
@@ -715,12 +743,8 @@ async def execute_download(
                     res_str = f" ({resolution}p)" if resolution else ""
                     comp_str = f"\n⚡ <i>Auto-compressed to fit Telegram {config.MAX_FILE_SIZE_MB:.0f}MB limit</i>" if is_comp else ""
 
-                    # Quick action button: One-tap MP3 extraction
-                    post_keyboard = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
-                        ]
-                    ])
+                    # Quick action button & channel recommendation keyboard
+                    post_keyboard = get_media_post_keyboard(vid_session_id)
 
                     thumb_handle = None
                     if thumb_file and Path(thumb_file).exists():
@@ -743,6 +767,8 @@ async def execute_download(
                                 if bot_handle:
                                     part_caption += f"\n🤖 {html.escape(bot_handle)}"
                                 is_last = (part_idx == total_parts - 1)
+                                if is_last:
+                                    part_caption += get_promo_caption_footer()
                                 with open(part_path, "rb") as pf:
                                     try:
                                         await context.bot.send_video(
@@ -780,6 +806,7 @@ async def execute_download(
                             )
                             if bot_handle:
                                 caption += f"\n🤖 {html.escape(bot_handle)}"
+                            caption += get_promo_caption_footer()
 
                             with open(file_path, "rb") as f:
                                 try:
@@ -905,6 +932,8 @@ async def execute_download(
                 caption = f"🎵 <b>{html.escape(title[:100])}</b> (192kbps • {filesize_mb:.1f} MB)"
                 if bot_handle:
                     caption += f"\n🤖 {html.escape(bot_handle)}"
+                caption += get_promo_caption_footer()
+                audio_keyboard = get_media_post_keyboard()
 
                 try:
                     with open(file_path, "rb") as f:
@@ -917,6 +946,7 @@ async def execute_download(
                             duration=duration,
                             caption=caption,
                             parse_mode=ParseMode.HTML,
+                            reply_markup=audio_keyboard,
                             read_timeout=300,
                             write_timeout=300,
                         )
@@ -933,6 +963,7 @@ async def execute_download(
                                 performer=uploader,
                                 duration=duration,
                                 caption=f"🎵 {title[:100]} (192kbps • {filesize_mb:.1f} MB)",
+                                reply_markup=audio_keyboard,
                                 read_timeout=300,
                                 write_timeout=300,
                             )

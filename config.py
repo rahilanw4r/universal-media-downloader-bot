@@ -64,6 +64,13 @@ ENABLE_VIDEO_COMPRESSION = os.getenv("ENABLE_VIDEO_COMPRESSION", "false").lower(
 # Forced channel membership (set to empty or "none" to disable)
 FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "@Bootscreen").strip()
 
+# Promotional recommended channels (Non-forced output recommendation)
+PROMO_CHANNELS_ENABLED = os.getenv("PROMO_CHANNELS_ENABLED", "true").lower() in ("1", "true", "yes")
+MOD_APK_CHANNEL = os.getenv("MOD_APK_CHANNEL", "ModRepository").strip().lstrip("@")
+WALLPAPER_CHANNEL = os.getenv("WALLPAPER_CHANNEL", "WallpapersRepository").strip().lstrip("@")
+MOD_APK_URL = f"https://t.me/{MOD_APK_CHANNEL}"
+WALLPAPER_URL = f"https://t.me/{WALLPAPER_CHANNEL}"
+
 # Optional: Restrict bot access to specific Telegram user IDs
 _allowed_raw = os.getenv("ALLOWED_TELEGRAM_USER_IDS", "").strip()
 ALLOWED_TELEGRAM_USER_IDS = [
