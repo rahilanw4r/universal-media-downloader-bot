@@ -86,6 +86,7 @@ flowchart LR
 | `/mp3 <url>` | `/audio` | Extract studio-grade 192kbps MP3 audio with embedded album cover art |
 | `/stop` | `/cancel` | Cancel active downloads, abort long tasks, and clear pending session menus |
 | `/ping` | — | Check server response latency, uptime, and system operational health |
+| `/stats` | `/analytics` | View total downloads, data processed, and system uptime (Admins see full dashboard) |
 | `/help` | — | Open the interactive user manual and instructions guide |
 | `/about` | — | Display bot architecture, engine versions, and uptime |
 | `/changelog` | — | View version release notes and recent feature updates |
