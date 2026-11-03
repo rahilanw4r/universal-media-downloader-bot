@@ -240,14 +240,6 @@ All 20 test suites should finish with `OK`.
 
 ---
 
-## 💬 Community & Support
-
-- **Community Discussion:** [Join @BootScreenCommunity](https://t.me/BootScreenCommunity)
-- **Announcements & Updates:** [Join @Bootscreen](https://t.me/Bootscreen)
-- **Direct Developer Contact:** [Rahil Anwar (@RahilAnw4r)](https://t.me/RahilAnw4r)
-
----
-
 ## 📄 License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
