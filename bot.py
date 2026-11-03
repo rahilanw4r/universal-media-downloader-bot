@@ -1181,38 +1181,8 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     platform = session["platform"]
     chat_id = update.effective_chat.id
 
-    # Video download with specified resolution
-    if action_tag.startswith("vid_"):
-        raw_code = action_tag.replace("vid_", "")
-        resolution = None
-        if "res_" in raw_code:
-            res_num = raw_code.replace("res_", "")
-            if res_num.isdigit() and int(res_num) > 0:
-                resolution = int(res_num)
-
-        res_label = f" ({resolution}p)" if resolution else ""
-
-        status_msg = await query.message.reply_text(
-            f"⏳ <b>Starting download from {html.escape(platform)}{res_label}...</b>",
-            parse_mode=ParseMode.HTML,
-        )
-        try:
-            await query.delete_message()
-        except Exception:
-            pass
-
-        await execute_download(
-            chat_id=chat_id,
-            status_msg=status_msg,
-            target_url=target_url,
-            platform=platform,
-            action="media",
-            context=context,
-            resolution=resolution,
-        )
-
     # Audio extraction (MP3)
-    elif action_tag == "aud":
+    if action_tag == "aud":
         status_msg = await query.message.reply_text(
             f"⏳ <b>Extracting MP3 audio from {html.escape(platform)}...</b>",
             parse_mode=ParseMode.HTML,
@@ -1224,6 +1194,16 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             platform=platform,
             action="audio",
             context=context,
+        )
+
+
+async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inform user that /mode and quality pickers have been permanently removed."""
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "ℹ️ <b>Quality Picker Removed:</b> The <code>/mode</code> command and resolution buttons have been permanently removed.\n\n"
+            "All media is now automatically downloaded directly in full original quality with zero clicks!",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -1583,6 +1563,7 @@ def main():
     app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
+    app.add_handler(CommandHandler("mode", mode_command))
 
     # Buttons callback
     app.add_handler(CallbackQueryHandler(button_callback_handler))
