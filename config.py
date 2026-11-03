@@ -151,18 +151,19 @@ def save_cookies_file(content: str) -> bool:
 def get_cookies_status() -> Dict[str, Any]:
     """Get diagnostic information about currently loaded cookies."""
     reload_cookies()
+    has_tb_login = bool(os.getenv("TERABOX_COOKIE") or os.getenv("NDUS"))
     if not COOKIES_FILE or not COOKIES_FILE.exists():
         return {
-            "loaded": False,
-            "message": "No cookies file found. Bot is running in cookie-less mobile client bypass mode.",
+            "loaded": has_tb_login,
+            "message": "TeraBox session active from .env (cookie-less mobile bypass for YouTube)." if has_tb_login else "No cookies file found. Bot is running in cookie-less mobile client bypass mode.",
             "path": None,
-            "total_cookies": 0,
+            "total_cookies": 1 if has_tb_login else 0,
             "youtube_cookies": 0,
             "instagram_cookies": 0,
-            "terabox_cookies": 0,
+            "terabox_cookies": 1 if has_tb_login else 0,
             "has_login": False,
             "has_ig_login": False,
-            "has_tb_login": False,
+            "has_tb_login": has_tb_login,
         }
 
     try:
