@@ -249,7 +249,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
-        f"• <code>/changelog</code> — Version release notes & updates\n"
         f"• <code>/help</code> — Full guide & instructions\n"
         f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
         f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
@@ -287,6 +286,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if is_adm:
         admin_section = (
             "\n👑 <b>Admin Commands:</b>\n"
+            "• <code>/changelog</code> — Latest release notes & announcement text\n"
             "• <code>/cookies</code> — Cookie status & diagnostics\n"
             "• <code>/clean</code> — Purge temporary download cache\n"
             "• <code>/broadcast &lt;msg&gt;</code> — Send announcement to all users\n"
@@ -314,7 +314,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/stats</code> — User count & download analytics\n"
         "• <code>/admin</code> — Contact developer directly\n"
         "• <code>/about</code> — Bot technical specifications\n"
-        "• <code>/changelog</code> — Version history & release notes\n"
         "• <code>/help</code> — Show this manual\n"
         f"{admin_section}\n"
         f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
@@ -368,6 +367,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not await check_user_auth(update, context):
         return
 
+    user = update.effective_user
     about_text = (
         "🤖 <b>Universal Media Downloader</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -379,12 +379,11 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "High-performance media extractor built for speed, quality, and simplicity."
     )
 
-    keyboard = [
-        [
-            InlineKeyboardButton("📜 Changelog", callback_data="show_changelog"),
-            InlineKeyboardButton("💬 Contact Admin", url=config.ADMIN_LINK),
-        ]
-    ]
+    row = []
+    if config.is_admin(user):
+        row.append(InlineKeyboardButton("📜 Changelog", callback_data="show_changelog"))
+    row.append(InlineKeyboardButton("💬 Contact Admin", url=config.ADMIN_LINK))
+    keyboard = [row]
 
     await update.message.reply_text(
         about_text,
@@ -394,34 +393,41 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+def get_changelog_text() -> str:
+    """Generate the latest release announcement text formatted for admin review and group broadcast."""
+    return (
+        f"📢 <b>Universal Media Downloader v{config.BOT_VERSION} Release Notes</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🚀 <b>v2.6.0 (Latest Release):</b>\n\n"
+        "• 🎵 <b>TikTok Direct Engine (No Watermark):</b>\n"
+        "  Direct high-speed engine resolving ISP & regional network blocks. Delivers HD videos without watermarks, full photo carousel albums, and pristine 192kbps MP3 audio.\n\n"
+        "• 📦 <b>DiskWala & TeraBox Overhaul:</b>\n"
+        "  Full integration for DiskWala (diskwala.com, playdiskwala.in, diskwala.fun across /app, /s, /c) with direct stream resolvers. Overhauled TeraBox engine with fast redirect resolution, jsToken extraction, and NDUS session cookies.\n\n"
+        "• 💎 <b>100% Original Quality (Lossless Delivery):</b>\n"
+        "  Eliminated lossy transcoding. Media files and streams are delivered in untouched native bitrates and resolutions.\n\n"
+        "• 🛑 <b>Instant Task Cancellation:</b>\n"
+        "  Added <code>/stop</code> and <code>/cancel</code> commands to instantly abort running downloads and clean up active sessions.\n\n"
+        "• ⚡ <b>2 GB Uploads & Zero-Loss Splitting:</b>\n"
+        "  Seamless Local Bot API integration with automated FFmpeg stream-copy splitting for large media files exceeding limits.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <i>Tip: Forward this announcement directly to your community group or broadcast it to users with /broadcast!</i>"
+    )
+
+
 async def changelog_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /changelog command - Displays recent updates and version history."""
+    """Handle /changelog command - Displays latest release announcement (Admin only)."""
     if not await check_user_auth(update, context):
         return
 
-    text = (
-        f"📜 <b>Changelog — Universal Media Downloader v{config.BOT_VERSION}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "<b>v2.6.0 (Latest):</b>\n"
-        "• 📦 <b>DiskWala Support:</b> Download from diskwala.com, diskwala.fun (/app, /s, /c).\n"
-        "• 🛡️ <b>TeraBox Substring Fix:</b> Fixed X.com false positive conflict on TeraBox URLs.\n"
-        "• ⚡ <b>Multi-Tier Resolvers:</b> Integrated diskwala.fun/api/resolve & direct fallbacks.\n"
-        "• 🎯 <b>Strict Host Parsing:</b> Strict netloc-based domain matching for all platforms.\n\n"
-        "<b>v2.5.0:</b>\n"
-        "• 🚀 <b>Local Bot API (2 GB Uploads):</b> Support for self-hosted Bot API server.\n"
-        "• ✂️ <b>Zero-Loss Auto-Split:</b> Videos exceeding limit split with zero quality loss.\n"
-        "• 📦 <b>TeraBox / EBox:</b> Direct extraction for TeraBox and mirror domains.\n"
-        "• 🛑 <b>Task Cancellation:</b> Added /stop and /cancel commands.\n"
-        "• 💎 <b>100% Original Quality:</b> Disabled lossy re-encoding by default.\n"
-        "• ☁️ <b>Cloud Deployment:</b> Render, Koyeb & Docker deployment blueprints.\n\n"
-        "<b>v2.4.0:</b>\n"
-        "• 🍪 <b>Platform Diagnostics:</b> Added /cookies command & live file reload.\n"
-        "• 🔧 <b>YouTube Extraction Fix:</b> Solved player response issue with mobile bypass.\n\n"
-        "<b>v2.3.0:</b>\n"
-        "• 🎛️ <b>Resolution Picker:</b> 1080p, 720p, 480p, 360p selection.\n"
-        "• 📊 <b>Live Progress Bar:</b> Real-time speed, bytes, and ETA."
-    )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    user = update.effective_user
+    if not config.is_admin(user):
+        await update.message.reply_text(
+            "⛔ <b>Access Denied:</b> This command is restricted to the bot administrator.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await update.message.reply_text(get_changelog_text(), parse_mode=ParseMode.HTML)
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1031,31 +1037,12 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await query.answer()
 
-    # Show Changelog
+    # Show Changelog (Admin only)
     if data == "show_changelog":
-        changelog_text = (
-            f"📜 <b>Changelog — Universal Media Downloader v{config.BOT_VERSION}</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "<b>v2.6.0 (Latest):</b>\n"
-            "• 📦 <b>DiskWala Support:</b> Download from diskwala.com, diskwala.fun (/app, /s, /c).\n"
-            "• 🛡️ <b>TeraBox Substring Fix:</b> Fixed X.com false positive conflict on TeraBox URLs.\n"
-            "• ⚡ <b>Multi-Tier Resolvers:</b> Integrated diskwala.fun/api/resolve & direct fallbacks.\n"
-            "• 🎯 <b>Strict Host Parsing:</b> Strict netloc-based domain matching for all platforms.\n\n"
-            "<b>v2.5.0:</b>\n"
-            "• 🚀 <b>2 GB Local Bot API:</b> Support for self-hosted Bot API.\n"
-            "• ✂️ <b>Zero-Loss Auto-Split:</b> 100% quality stream copy splitting.\n"
-            "• 📦 <b>TeraBox / EBox:</b> Direct resolution for all mirror domains.\n"
-            "• 🛑 <b>Task Cancellation:</b> /stop and /cancel commands.\n"
-            "• 💎 <b>Lossless Delivery:</b> Disabled lossy re-encoding by default.\n"
-            "• ☁️ <b>Cloud Deployment:</b> Render, Koyeb & Docker blueprints.\n\n"
-            "<b>v2.4.0:</b>\n"
-            "• 🍪 <b>Platform Diagnostics:</b> Added /cookies command.\n"
-            "• 🔧 <b>YouTube Fix:</b> Mobile client bypass for player response.\n\n"
-            "<b>v2.3.0:</b>\n"
-            "• 🎛️ <b>Resolution Picker:</b> 1080p, 720p, 480p selection.\n"
-            "• 📊 <b>Live Progress Bar:</b> Real-time speed and ETA."
-        )
-        await query.message.reply_text(changelog_text, parse_mode=ParseMode.HTML)
+        if not config.is_admin(user):
+            await query.answer("⛔ Access denied: This information is reserved for bot administrators.", show_alert=True)
+            return
+        await query.message.reply_text(get_changelog_text(), parse_mode=ParseMode.HTML)
         return
 
     # 1. Open Admin Contact
@@ -1445,7 +1432,6 @@ async def post_init(application: Application) -> None:
         BotCommand("stop", "Stop active downloads & clear sessions"),
         BotCommand("ping", "Check bot latency & server status"),
         BotCommand("stats", "View download analytics"),
-        BotCommand("changelog", "View version history & updates"),
         BotCommand("help", "User manual & instructions"),
         BotCommand("about", "About bot & specifications"),
         BotCommand("admin", "Contact developer / support"),

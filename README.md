@@ -69,7 +69,6 @@ flowchart LR
 | `/stats` | `/analytics` | View download metrics and system uptime |
 | `/help` | — | Show the user guide and instructions |
 | `/about` | — | View bot engine specifications and version |
-| `/changelog` | — | View recent release notes and updates |
 | `/contact` | `/admin` | Contact bot administrator |
 
 ### Admin Commands
@@ -77,6 +76,7 @@ flowchart LR
 | Command | Alias | Description |
 |---|---|---|
 | `/stats` | `/analytics` | View complete metrics: active users, total downloads, platform breakdown |
+| `/changelog` | — | View latest detailed release notes and group announcement format |
 | `/cookies` | `/cookie` | Check cookie status; upload updated `cookies.txt` directly in chat |
 | `/clean` | `/clearcache` | Delete temporary files from download directory |
 | `/broadcast <msg>` | — | Send announcement message to all registered bot users |
