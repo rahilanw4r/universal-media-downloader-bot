@@ -62,12 +62,17 @@ PLATFORM_DOMAINS = {
     "youtu.be": "YouTube",
     "twitter.com": "X (Twitter)",
     "x.com": "X (Twitter)",
+    "t.co": "X (Twitter)",
     "tiktok.com": "TikTok",
     "pinterest.com": "Pinterest",
     "pin.it": "Pinterest",
     "reddit.com": "Reddit",
+    "redd.it": "Reddit",
     "facebook.com": "Facebook",
     "fb.watch": "Facebook",
+    "fb.com": "Facebook",
+    "diskwala.com": "DiskWala",
+    "diskwala.fun": "DiskWala",
     "terabox.com": "TeraBox",
     "teraboxapp.com": "TeraBox",
     "terabox.app": "TeraBox",
@@ -82,6 +87,17 @@ PLATFORM_DOMAINS = {
     "momerybox.com": "TeraBox",
     "tibibox.com": "TeraBox",
 }
+
+DISKWALA_DOMAINS = (
+    "diskwala.com",
+    "diskwala.fun",
+)
+
+TWITTER_DOMAINS = (
+    "twitter.com",
+    "x.com",
+    "t.co",
+)
 
 TERABOX_DOMAINS = (
     "terabox.com",
@@ -110,25 +126,63 @@ def find_urls(text: str) -> List[str]:
     return URL_REGEX.findall(text)
 
 
+def _get_url_host(url: str) -> str:
+    """Safely extract lowercase hostname from URL without port."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+        if ":" in host:
+            host = host.split(":")[0]
+        return host
+    except Exception:
+        return ""
+
+
 def detect_platform(url: str) -> str:
-    """Detect platform name from URL."""
-    url_lower = url.lower()
+    """Detect platform name from URL using strict host-level matching."""
+    host = _get_url_host(url)
+    if not host:
+        return "Web Video"
+
+    # Specific multi-domain platform groups first (prevents substring conflicts like x.com in terabox.com)
+    if any(host == d or host.endswith("." + d) for d in TERABOX_DOMAINS):
+        return "TeraBox"
+    if any(host == d or host.endswith("." + d) for d in DISKWALA_DOMAINS):
+        return "DiskWala"
+    if any(host == d or host.endswith("." + d) for d in TWITTER_DOMAINS):
+        return "X (Twitter)"
+    if any(host == d or host.endswith("." + d) for d in ("instagram.com", "instagr.am")):
+        return "Instagram"
+    if any(host == d or host.endswith("." + d) for d in ("youtube.com", "youtu.be")):
+        return "YouTube"
+    if any(host == d or host.endswith("." + d) for d in ("tiktok.com",)):
+        return "TikTok"
+    if any(host == d or host.endswith("." + d) for d in ("pinterest.com", "pin.it")):
+        return "Pinterest"
+    if any(host == d or host.endswith("." + d) for d in ("reddit.com", "redd.it")):
+        return "Reddit"
+    if any(host == d or host.endswith("." + d) for d in ("facebook.com", "fb.watch", "fb.com")):
+        return "Facebook"
+
     for domain, name in PLATFORM_DOMAINS.items():
-        if domain in url_lower:
+        if host == domain or host.endswith("." + domain):
             return name
+
     return "Web Video"
 
 
 def is_pinterest_url(url: str) -> bool:
-    """Check if URL belongs to Pinterest."""
-    url_lower = url.lower()
-    return "pinterest.com" in url_lower or "pin.it" in url_lower
+    """Check if URL belongs to Pinterest using host matching."""
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in ("pinterest.com", "pin.it"))
 
 
 def resolve_pinterest_url(url: str) -> str:
     """Resolve shortened pin.it redirects to the canonical pinterest.com URL."""
-    url_lower = url.lower()
-    if "pin.it" in url_lower:
+    host = _get_url_host(url)
+    if host == "pin.it" or host.endswith(".pin.it"):
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -145,21 +199,49 @@ def resolve_pinterest_url(url: str) -> str:
 
 
 def is_twitter_url(url: str) -> bool:
-    """Check if URL belongs to X / Twitter."""
-    url_lower = url.lower()
-    return "twitter.com" in url_lower or "x.com" in url_lower
+    """Check if URL belongs to X / Twitter using host matching."""
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in TWITTER_DOMAINS)
 
 
 def is_instagram_url(url: str) -> bool:
-    """Check if URL belongs to Instagram."""
-    url_lower = url.lower()
-    return "instagram.com" in url_lower or "instagr.am" in url_lower
+    """Check if URL belongs to Instagram using host matching."""
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in ("instagram.com", "instagr.am"))
 
 
 def is_terabox_url(url: str) -> bool:
     """Check if URL belongs to TeraBox or any of its mirror domains."""
-    url_lower = url.lower()
-    return any(d in url_lower for d in TERABOX_DOMAINS)
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in TERABOX_DOMAINS)
+
+
+def is_diskwala_url(url: str) -> bool:
+    """Check if URL belongs to DiskWala."""
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in DISKWALA_DOMAINS)
+
+
+def extract_diskwala_id(url: str) -> str:
+    """Extract file ID or code from DiskWala URL formats."""
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        if "id" in qs and qs["id"]:
+            return qs["id"][0].strip()
+        path = parsed.path.strip("/")
+        for prefix in ("app/", "s/", "c/", "file/"):
+            if prefix in path:
+                return path.split(prefix)[1].split("/")[0].split("?")[0].strip()
+        parts = [p for p in path.split("/") if p]
+        if parts:
+            return parts[-1].split("?")[0].strip()
+    except Exception:
+        pass
+    return ""
 
 
 def extract_terabox_surl(url: str) -> str:
@@ -555,17 +637,40 @@ class MediaDownloader:
     ) -> Dict[str, Any]:
         """
         Download files/videos from TeraBox and all supported mirror domains:
-        1. Unified resolver gateway (Cloudflare Worker proxy).
-        2. Direct TeraBox share/list API with optional ndus cookie.
-        3. Fallback public resolver APIs and direct HTML scraping.
+        1. Canonicalize HTTP redirects to extract direct shorturl/surl.
+        2. Unified resolver gateways (Cloudflare Worker proxies, diskwala.fun/api/resolve).
+        3. Direct TeraBox share/list API with optional ndus cookie.
+        4. Fallback public resolver APIs and direct HTML scraping.
         Supports chunked resume-enabled streaming and live progress reporting.
         """
         if not requests:
             raise DownloaderError("Requests library not available.")
 
+        # Follow any redirects to unmask canonical sharing link
+        try:
+            head_headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                ),
+                "Accept": "*/*",
+            }
+            head_resp = requests.head(url, headers=head_headers, allow_redirects=True, timeout=8)
+            if head_resp.url and head_resp.url != url:
+                url = head_resp.url
+        except Exception:
+            pass
+
         surl = extract_terabox_surl(url)
         if not surl:
             raise DownloaderError("Could not extract TeraBox file ID from link.")
+
+        # Prepare both surl with '1' and clean surl for maximum resolver compatibility
+        surls_to_try = [surl]
+        if surl.startswith("1") and len(surl) > 1:
+            surls_to_try.append(surl[1:])
+        elif not surl.startswith("1"):
+            surls_to_try.append("1" + surl)
 
         # Check for user-provided TeraBox cookie (ndus)
         ndus_cookie = os.getenv("TERABOX_COOKIE", "").strip() or os.getenv("NDUS", "").strip()
@@ -597,14 +702,15 @@ class MediaDownloader:
 
         file_info = None
 
-        # Tier 1: Cloudflare Worker Unified Proxy (mode=resolve)
-        proxy_endpoints = [
-            f"https://tbx-proxy.shakir-ansarii075.workers.dev/?mode=resolve&surl={surl}",
-            f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={surl}",
-        ]
+        # Tier 1: Cloudflare Worker Unified Proxies (mode=resolve)
+        proxy_endpoints = []
+        for s in surls_to_try:
+            proxy_endpoints.append(f"https://tbx-proxy.shakir-ansarii075.workers.dev/?mode=resolve&surl={s}")
+            proxy_endpoints.append(f"https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl={s}")
+
         for p_url in proxy_endpoints:
             try:
-                r = requests.get(p_url, headers=headers, timeout=20)
+                r = requests.get(p_url, headers=headers, timeout=12)
                 if r.status_code == 200:
                     data = r.json()
                     if isinstance(data, list) and data:
@@ -633,70 +739,107 @@ class MediaDownloader:
             except Exception as e:
                 logger.debug("Proxy resolution failed for %s: %s", p_url, e)
 
-        # Tier 2: Direct TeraBox API with app_id=250528
+        # Tier 2: Public Multi-Platform Resolver (diskwala.fun/api/resolve)
+        if not file_info:
+            try:
+                fun_resp = requests.post(
+                    "https://diskwala.fun/api/resolve",
+                    json={"url": url},
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                        ),
+                        "Referer": "https://diskwala.fun/",
+                        "Origin": "https://diskwala.fun",
+                        "Accept": "application/json",
+                    },
+                    timeout=15,
+                )
+                if fun_resp.status_code == 200:
+                    data = fun_resp.json()
+                    res = data.get("result") or data.get("data") or {}
+                    d = res.get("downloadUrl") or res.get("watchUrl") or res.get("url") or res.get("dlink")
+                    if d:
+                        file_info = {
+                            "file_name": res.get("title") or res.get("fileName") or f"terabox_{surl}.mp4",
+                            "dlink": d,
+                            "size": int(res.get("size") or res.get("fileSize") or 0),
+                            "thumb": res.get("thumbnail") or res.get("thumb"),
+                        }
+            except Exception as e:
+                logger.debug("Diskwala resolver tier failed for TeraBox: %s", e)
+
+        # Tier 3: Direct TeraBox API with app_id=250528
         if not file_info:
             api_hosts = ["www.terabox.app", "www.1024tera.com", "www.terabox.com"]
             for host in api_hosts:
-                try:
-                    api_url = f"https://{host}/share/list?app_id=250528&shorturl={surl}&root=1"
-                    r = requests.get(api_url, headers=headers, timeout=20)
-                    if r.status_code == 200:
-                        data = r.json()
-                        items = data.get("list") or []
-                        if items and isinstance(items, list):
-                            first = items[0]
-                            if first.get("dlink"):
-                                file_info = {
-                                    "file_name": first.get("server_filename") or "terabox_media.mp4",
-                                    "dlink": first.get("dlink"),
-                                    "size": int(first.get("size", 0)),
-                                    "thumb": (first.get("thumbs") or {}).get("url3"),
-                                }
-                                break
-                except Exception as e:
-                    logger.debug("Direct TeraBox API failed on %s: %s", host, e)
+                for s in surls_to_try:
+                    try:
+                        api_url = f"https://{host}/share/list?app_id=250528&shorturl={s}&root=1"
+                        r = requests.get(api_url, headers=headers, timeout=15)
+                        if r.status_code == 200:
+                            data = r.json()
+                            items = data.get("list") or []
+                            if items and isinstance(items, list):
+                                first = items[0]
+                                if first.get("dlink"):
+                                    file_info = {
+                                        "file_name": first.get("server_filename") or "terabox_media.mp4",
+                                        "dlink": first.get("dlink"),
+                                        "size": int(first.get("size", 0)),
+                                        "thumb": (first.get("thumbs") or {}).get("url3"),
+                                    }
+                                    break
+                    except Exception as e:
+                        logger.debug("Direct TeraBox API failed on %s for %s: %s", host, s, e)
+                if file_info:
+                    break
 
-        # Tier 3: Direct Webpage HTML Token Extraction
+        # Tier 4: Direct Webpage HTML Token Extraction
         if not file_info:
             try:
-                web_url = f"https://www.1024terabox.com/sharing/link?surl={surl}"
-                s_resp = requests.get(web_url, headers=headers, timeout=20, allow_redirects=True)
-                html_text = s_resp.text
-                js_token = None
-                logid = None
-                if 'fn%28%22' in html_text and '%22%29' in html_text:
-                    js_token = html_text.split('fn%28%22')[1].split('%22%29')[0]
-                if 'dp-logid=' in html_text and '&' in html_text:
-                    logid = html_text.split('dp-logid=')[1].split('&')[0]
+                for s in surls_to_try:
+                    web_url = f"https://www.1024terabox.com/sharing/link?surl={s}"
+                    s_resp = requests.get(web_url, headers=headers, timeout=15, allow_redirects=True)
+                    html_text = s_resp.text
+                    js_token = None
+                    logid = None
+                    if 'fn%28%22' in html_text and '%22%29' in html_text:
+                        js_token = html_text.split('fn%28%22')[1].split('%22%29')[0]
+                    if 'dp-logid=' in html_text and '&' in html_text:
+                        logid = html_text.split('dp-logid=')[1].split('&')[0]
 
-                if js_token and logid:
-                    params = {
-                        "app_id": "250528",
-                        "web": "1",
-                        "channel": "dubox",
-                        "clienttype": "0",
-                        "jsToken": js_token,
-                        "dp-logid": logid,
-                        "page": "1",
-                        "num": "20",
-                        "by": "name",
-                        "order": "asc",
-                        "shorturl": surl,
-                        "root": "1",
-                    }
-                    r2 = requests.get("https://www.terabox.app/share/list", headers=headers, params=params, timeout=20)
-                    if r2.status_code == 200:
-                        data = r2.json()
-                        items = data.get("list") or []
-                        if items:
-                            first = items[0]
-                            if first.get("dlink"):
-                                file_info = {
-                                    "file_name": first.get("server_filename") or "terabox_media.mp4",
-                                    "dlink": first.get("dlink"),
-                                    "size": int(first.get("size", 0)),
-                                    "thumb": (first.get("thumbs") or {}).get("url3"),
-                                }
+                    if js_token and logid:
+                        params = {
+                            "app_id": "250528",
+                            "web": "1",
+                            "channel": "dubox",
+                            "clienttype": "0",
+                            "jsToken": js_token,
+                            "dp-logid": logid,
+                            "page": "1",
+                            "num": "20",
+                            "by": "name",
+                            "order": "asc",
+                            "shorturl": s,
+                            "root": "1",
+                        }
+                        r2 = requests.get("https://www.terabox.app/share/list", headers=headers, params=params, timeout=15)
+                        if r2.status_code == 200:
+                            data = r2.json()
+                            items = data.get("list") or []
+                            if items:
+                                first = items[0]
+                                if first.get("dlink"):
+                                    file_info = {
+                                        "file_name": first.get("server_filename") or "terabox_media.mp4",
+                                        "dlink": first.get("dlink"),
+                                        "size": int(first.get("size", 0)),
+                                        "thumb": (first.get("thumbs") or {}).get("url3"),
+                                    }
+                                    break
             except Exception as e:
                 logger.debug("Direct HTML scraping failed: %s", e)
 
@@ -811,6 +954,247 @@ class MediaDownloader:
             "dir_path": temp_dir,
             "title": safe_name,
             "uploader": "TeraBox",
+            "duration": duration,
+            "thumbnail": file_info.get("thumb"),
+            "thumb_file": thumb_file,
+            "is_compressed": is_comp,
+            "is_split": is_split,
+            "filesize_mb": filesize_mb,
+        }
+
+    def _download_diskwala(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Download files/videos from DiskWala (diskwala.com, diskwala.fun):
+        1. Custom API endpoint if configured (DISKWALA_API_URL / DISKWALA_API_KEY).
+        2. Direct resolution gateway (https://diskwala.fun/api/resolve).
+        3. Web metadata & direct CDN scraping.
+        Supports chunked resume-enabled streaming and live progress reporting.
+        """
+        if not requests:
+            raise DownloaderError("Requests library not available.")
+
+        file_id = extract_diskwala_id(url)
+        logger.info(f"Extracting DiskWala file for id='{file_id}' (url={url})...")
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://diskwala.com/",
+            "Origin": "https://diskwala.com",
+        }
+
+        file_info = None
+
+        # Tier 1: Configured Custom API (e.g. diskwaladevapi or private resolver)
+        api_url = getattr(config, "DISKWALA_API_URL", "").strip()
+        api_key = getattr(config, "DISKWALA_API_KEY", "").strip()
+        if api_url:
+            try:
+                custom_headers = dict(headers)
+                if api_key:
+                    custom_headers["x-api-key"] = api_key
+                    custom_headers["Authorization"] = f"Bearer {api_key}"
+                r = requests.post(api_url, json={"url": url, "id": file_id}, headers=custom_headers, timeout=20)
+                if r.status_code == 200:
+                    data = r.json()
+                    dl = data.get("download_url") or data.get("downloadUrl") or data.get("url") or data.get("dlink")
+                    if dl:
+                        file_info = {
+                            "file_name": data.get("file_name") or data.get("title") or f"diskwala_{file_id}.mp4",
+                            "dlink": dl,
+                            "size": int(data.get("size") or data.get("file_size") or 0),
+                            "thumb": data.get("thumbnail") or data.get("thumb"),
+                        }
+            except Exception as e:
+                logger.debug(f"Custom DiskWala API failed: {e}")
+
+        # Tier 2: Public Resolver Gateway (diskwala.fun/api/resolve)
+        if not file_info:
+            try:
+                fun_resp = requests.post(
+                    "https://diskwala.fun/api/resolve",
+                    json={"url": url},
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                        ),
+                        "Referer": "https://diskwala.fun/",
+                        "Origin": "https://diskwala.fun",
+                        "Accept": "application/json",
+                    },
+                    timeout=20,
+                )
+                if fun_resp.status_code == 200:
+                    data = fun_resp.json()
+                    res = data.get("result") or data.get("data") or {}
+                    dlink = res.get("downloadUrl") or res.get("watchUrl") or res.get("url") or res.get("dlink")
+                    if dlink:
+                        file_info = {
+                            "file_name": res.get("title") or res.get("fileName") or f"diskwala_{file_id}.mp4",
+                            "dlink": dlink,
+                            "size": int(res.get("size") or res.get("fileSize") or 0),
+                            "thumb": res.get("thumbnail") or res.get("thumb"),
+                        }
+            except Exception as e:
+                logger.debug(f"DiskWala fun resolver failed: {e}")
+
+        # Tier 3: Direct Webpage HTML Token / og:video Scraping
+        if not file_info:
+            try:
+                candidate_urls = [url]
+                if file_id:
+                    candidate_urls.extend([
+                        f"https://diskwala.com/app/{file_id}",
+                        f"https://diskwala.fun/s/{file_id}",
+                        f"https://www.diskwala.com/s/{file_id}",
+                    ])
+                for c_url in candidate_urls:
+                    try:
+                        r = requests.get(c_url, headers=headers, timeout=15, allow_redirects=True)
+                        if r.status_code == 200:
+                            html_text = r.text
+                            v_match = re.search(r'property="og:video(?::secure_url)?"\s+content="([^"]+)"', html_text, re.I)
+                            if not v_match:
+                                v_match = re.search(r'content="([^"]+)"\s+property="og:video(?::secure_url)?"', html_text, re.I)
+                            if not v_match:
+                                v_match = re.search(r'(?:source\s+src|video\s+src)="([^"]+)"', html_text, re.I)
+
+                            title_m = re.search(r'property="og:title"\s+content="([^"]+)"', html_text, re.I)
+                            title = title_m.group(1).strip() if title_m else f"diskwala_{file_id}.mp4"
+
+                            if v_match:
+                                file_info = {
+                                    "file_name": title,
+                                    "dlink": v_match.group(1),
+                                    "size": 0,
+                                    "thumb": None,
+                                }
+                                break
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"Direct HTML scraping for DiskWala failed: {e}")
+
+        if not file_info or not file_info.get("dlink"):
+            raise DownloaderError(
+                "Unable to resolve DiskWala link. The file may be private, expired, or require a verified app session."
+            )
+
+        file_name = file_info["file_name"]
+        dlink = file_info["dlink"]
+        expected_size = file_info.get("size", 0)
+
+        # Sanitize filename
+        safe_name = re.sub(r'[\\/*?:"<>|]', "", file_name).strip() or f"diskwala_{file_id}.mp4"
+        if not any(safe_name.lower().endswith(ext) for ext in VIDEO_EXTS | IMAGE_EXTS):
+            safe_name += ".mp4"
+        out_path = temp_dir / safe_name
+
+        dl_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "*/*",
+            "Referer": "https://diskwala.com/",
+            "Connection": "keep-alive",
+        }
+
+        logger.info(f"Downloading DiskWala file '{safe_name}'...")
+        with requests.get(dlink, headers=dl_headers, stream=True, timeout=60) as resp:
+            resp.raise_for_status()
+            total_bytes = int(resp.headers.get("content-length", 0)) or expected_size
+            downloaded = 0
+            start_t = time.time()
+            last_t = start_t
+            last_bytes = 0
+
+            with open(out_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        cur_t = time.time()
+                        if progress_callback and (cur_t - last_t >= 1.5 or (total_bytes and downloaded >= total_bytes)):
+                            elapsed = cur_t - last_t
+                            speed = (downloaded - last_bytes) / elapsed if elapsed > 0 else 0
+                            pct = (downloaded / total_bytes * 100) if total_bytes > 0 else 0
+                            rem = (total_bytes - downloaded) if total_bytes > 0 else 0
+                            eta = rem / speed if speed > 0 else 0
+                            last_t = cur_t
+                            last_bytes = downloaded
+                            progress_callback({
+                                "percent": pct,
+                                "downloaded": downloaded,
+                                "total": total_bytes,
+                                "speed": speed,
+                                "eta": eta,
+                            })
+
+        filesize_mb = out_path.stat().st_size / (1024 * 1024)
+        is_vid = out_path.suffix.lower() in VIDEO_EXTS
+        is_img = out_path.suffix.lower() in IMAGE_EXTS
+        is_comp = False
+
+        # Attempt optional compression or zero-loss splitting if video exceeds configured limit
+        is_split = False
+        parts = [out_path]
+        if filesize_mb > config.MAX_FILE_SIZE_MB and is_vid and config.ENABLE_VIDEO_COMPRESSION:
+            logger.info("DiskWala video exceeds %.0fMB (%.1f MB), attempting fast compression...", config.MAX_FILE_SIZE_MB, filesize_mb)
+            compressed = self._compress_video_to_fit(out_path, temp_dir, duration=0)
+            if compressed and compressed.exists():
+                out_path = compressed
+                filesize_mb = out_path.stat().st_size / (1024 * 1024)
+                parts = [out_path]
+                is_comp = True
+
+        if not is_comp and filesize_mb > config.MAX_FILE_SIZE_MB and is_vid and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+            split_parts = self._split_video_into_parts(out_path, temp_dir)
+            if len(split_parts) > 1:
+                parts = split_parts
+                out_path = split_parts[0]
+                is_split = True
+                logger.info("Auto-split oversized DiskWala video into %d parts", len(parts))
+
+        if not is_split and not is_comp and filesize_mb > config.MAX_FILE_SIZE_MB:
+            raise DownloaderError(
+                f"File is too large for Telegram bot delivery ({filesize_mb:.1f} MB exceeds {config.MAX_FILE_SIZE_MB:.0f} MB limit)."
+            )
+
+        # Extract crisp thumbnail for video
+        thumb_file = None
+        duration = 0
+        if is_vid:
+            thumb_file = self._extract_video_thumbnail(out_path, temp_dir)
+            try:
+                cmd = [FFMPEG_EXE, "-i", str(out_path)]
+                p = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=10)
+                m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", p.stderr)
+                if m:
+                    h, mn, s = m.groups()
+                    duration = int(h) * 3600 + int(mn) * 60 + float(s)
+            except Exception:
+                pass
+
+        out_type = "video" if is_vid else ("photo" if is_img else "video")
+
+        return {
+            "type": out_type,
+            "file_path": out_path,
+            "file_paths": parts,
+            "dir_path": temp_dir,
+            "title": safe_name,
+            "uploader": "DiskWala",
             "duration": duration,
             "thumbnail": file_info.get("thumb"),
             "thumb_file": thumb_file,
@@ -1139,6 +1523,22 @@ class MediaDownloader:
                     {
                         "height": 0,
                         "label": "📥 Download TeraBox File",
+                        "code": "res_best",
+                    }
+                ],
+            }
+
+        if is_diskwala_url(url):
+            file_id = extract_diskwala_id(url)
+            return {
+                "title": f"DiskWala File ({file_id})" if file_id else "DiskWala File",
+                "uploader": "DiskWala",
+                "thumbnail": None,
+                "duration": 0,
+                "qualities": [
+                    {
+                        "height": 0,
+                        "label": "📥 Download DiskWala File",
                         "code": "res_best",
                     }
                 ],
@@ -1614,7 +2014,11 @@ class MediaDownloader:
             if is_terabox_url(url):
                 return await asyncio.to_thread(self._download_terabox, url, temp_dir, progress_callback)
 
-            # 2. Specialized Twitter / X Downloader (instant direct photo/video/album extraction)
+            # 2. Specialized DiskWala Downloader
+            if is_diskwala_url(url):
+                return await asyncio.to_thread(self._download_diskwala, url, temp_dir, progress_callback)
+
+            # 3. Specialized Twitter / X Downloader (instant direct photo/video/album extraction)
             if is_twitter_url(url):
                 try:
                     tw_res = await asyncio.to_thread(self._download_twitter, url, temp_dir)

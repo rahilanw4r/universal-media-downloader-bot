@@ -9,6 +9,8 @@ from downloader import (
     is_instagram_url,
     is_terabox_url,
     extract_terabox_surl,
+    is_diskwala_url,
+    extract_diskwala_id,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -42,8 +44,11 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(detect_platform("https://x.com/user/status/123"), "X (Twitter)")
         self.assertEqual(detect_platform("https://twitter.com/user/status/123"), "X (Twitter)")
         self.assertEqual(detect_platform("https://www.tiktok.com/@user/video/123"), "TikTok")
+        self.assertEqual(detect_platform("https://terabox.com/s/1abc123"), "TeraBox")
         self.assertEqual(detect_platform("https://teraboxapp.com/s/1abc123"), "TeraBox")
         self.assertEqual(detect_platform("https://1024tera.com/s/1xyz987"), "TeraBox")
+        self.assertEqual(detect_platform("https://diskwala.com/app/66fd54e2"), "DiskWala")
+        self.assertEqual(detect_platform("https://diskwala.fun/s/12345"), "DiskWala")
         self.assertEqual(detect_platform("https://pin.it/abc123"), "Pinterest")
         self.assertEqual(detect_platform("https://www.reddit.com/r/videos/comments/123/"), "Reddit")
         self.assertEqual(detect_platform("https://example.com/video.mp4"), "Web Video")
@@ -60,11 +65,26 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_twitter_url("https://x.com/NASA/status/1783547844005695627"))
         self.assertTrue(is_twitter_url("https://twitter.com/user/status/123"))
         self.assertFalse(is_twitter_url("https://instagram.com/p/123"))
+        self.assertFalse(is_twitter_url("https://terabox.com/s/123456"))
+        self.assertFalse(is_twitter_url("https://diskwala.com/app/123456"))
 
         self.assertTrue(is_instagram_url("https://www.instagram.com/p/C-123456/"))
         self.assertTrue(is_instagram_url("https://instagram.com/reel/C-123456/"))
         self.assertTrue(is_instagram_url("https://instagr.am/p/C-123456/"))
         self.assertFalse(is_instagram_url("https://x.com/user/status/123"))
+
+    def test_diskwala_helpers(self):
+        self.assertTrue(is_diskwala_url("https://diskwala.com/app/66fd54e2abc"))
+        self.assertTrue(is_diskwala_url("https://www.diskwala.com/app/66fd54e2abc"))
+        self.assertTrue(is_diskwala_url("https://diskwala.fun/s/123456"))
+        self.assertTrue(is_diskwala_url("https://diskwala.com/c/mycode"))
+        self.assertFalse(is_diskwala_url("https://youtube.com/watch?v=123"))
+        self.assertFalse(is_diskwala_url("https://terabox.com/s/123"))
+
+        self.assertEqual(extract_diskwala_id("https://diskwala.com/app/66fd54e2abc"), "66fd54e2abc")
+        self.assertEqual(extract_diskwala_id("https://diskwala.fun/s/myfile123"), "myfile123")
+        self.assertEqual(extract_diskwala_id("https://diskwala.com/c/sharecode"), "sharecode")
+        self.assertEqual(extract_diskwala_id("https://diskwala.com/file?id=target_id"), "target_id")
 
     def test_terabox_helpers(self):
         self.assertTrue(is_terabox_url("https://teraboxapp.com/s/1RCBLl4RBXh446ZKoHgHZJt_Q"))
@@ -239,7 +259,7 @@ class TestDownloader(unittest.TestCase):
     def test_api_server_info(self):
         info = config.get_api_server_info()
         self.assertIn("version", info)
-        self.assertEqual(info["version"], "2.5.0")
+        self.assertEqual(info["version"], config.BOT_VERSION)
         self.assertIn("is_local", info)
         self.assertIn("base_url", info)
         self.assertIn("max_filesize_mb", info)

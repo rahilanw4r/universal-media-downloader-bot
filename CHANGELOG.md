@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [2.6.0] - 2026-11-03
+
+### Added
+- **DiskWala Engine:** Full support for DiskWala links (`diskwala.com`, `diskwala.fun`, `/app/<id>`, `/s/<id>`, `/c/<code>`) with direct streaming, progress bars, and zero-loss auto-splitting.
+- **Multi-Tier TeraBox Resolvers:** Added HTTP redirect resolution, dual `surl` candidate formats, and `diskwala.fun/api/resolve` upstream fallback.
+- **DiskWala Configuration:** Added `DISKWALA_API_KEY` and `DISKWALA_API_URL` to `config.py` for optional private/third-party API extraction.
+
+### Fixed
+- **TeraBox "Downloading from X" Bug:** Resolved platform conflict where `"x.com"` matched `"terabox.com"` as a substring in `PLATFORM_DOMAINS` and `is_twitter_url()`.
+- **Strict Domain Resolution:** Replaced naive substring URL checks across all platform matchers with strict parsed hostname (`netloc`) checks.
+
+---
+
 ## [2.5.0] - 2026-11-03
 
 ### Added

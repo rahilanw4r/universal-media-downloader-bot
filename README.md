@@ -4,13 +4,13 @@
 
 ### An open-source, ultra-fast Telegram bot for downloading media, full videos up to 2 GB, and extracting MP3 audio from all major platforms in 100% original quality.
 
-[![Version: 2.5.0](https://img.shields.io/badge/Version-2.5.0-brightgreen.svg)](CHANGELOG.md)
+[![Version: 2.6.0](https://img.shields.io/badge/Version-2.6.0-brightgreen.svg)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python: 3.10 | 3.11 | 3.12](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v21%2B-blue?logo=telegram)](https://core.telegram.org/bots/api)
 [![yt-dlp](https://img.shields.io/badge/Powered%20By-yt--dlp-red?logo=youtube)](https://github.com/yt-dlp/yt-dlp)
 [![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
-[![Changelog](https://img.shields.io/badge/Changelog-v2.5.0-blueviolet.svg)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v2.6.0-blueviolet.svg)](CHANGELOG.md)
 
 [Live Bot Demo](https://t.me/UniversalMediaSaverBot) • [Changelog](CHANGELOG.md) • [Report Bug](.github/ISSUE_TEMPLATE/bug_report.md) • [Request Feature](.github/ISSUE_TEMPLATE/feature_request.md)
 
@@ -25,6 +25,7 @@
 | 🎥 **YouTube** | Shorts, Full Videos, Live Recordings | 1080p, 720p, 480p, 360p, MP3 |
 | 📸 **Instagram** | Reels, Posts, Carousels, Stories | Multi-item albums, original audio |
 | 📦 **TeraBox / EBox** | Shared files & videos (`terabox`, `1024tera`, `freeterabox`, etc.) | Direct link resolution & multi-tier fallback |
+| 💾 **DiskWala** | Shared files & videos (`diskwala.com`, `diskwala.fun`, `/app`, `/s`, `/c`) | Multi-tier streaming & zero-loss auto-splitting |
 | 🐦 **X (Twitter)** | Videos, Clips, Animated GIFs | Best available stream via fxTwitter/vxTwitter |
 | 🎵 **TikTok** | Videos & Sounds | Clean watermark-free MP4 |
 | 📌 **Pinterest** | Video Pins & High-Res Clips | Clean direct video download |
@@ -72,6 +73,8 @@
 | `FORCE_SUB_CHANNEL` | `@Bootscreen` | Required channel membership gate (leave empty to disable) |
 | `ALLOWED_TELEGRAM_USER_IDS` | *Empty* | Whitelist user IDs (comma-separated). Empty allows everyone |
 | `ADMIN_ID` | *Empty* | Telegram user ID of the admin for privileged commands |
+| `DISKWALA_API_KEY` | *Empty* | Optional API key for third-party Diskwala extraction services |
+| `DISKWALA_API_URL` | *Empty* | Optional custom Diskwala extractor/proxy endpoint |
 
 ---
 

@@ -22,9 +22,13 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 
 # Application Version
-BOT_VERSION = "2.5.0"
+BOT_VERSION = "2.6.0"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+# Optional DiskWala extraction API key and custom resolver URL
+DISKWALA_API_KEY = os.getenv("DISKWALA_API_KEY", "").strip()
+DISKWALA_API_URL = os.getenv("DISKWALA_API_URL", "").strip()
 
 # Admin contact information
 ADMIN_USERNAME = "@RahilAnw4r"
