@@ -835,10 +835,10 @@ async def execute_download(
             except DownloaderError as e:
                 logger.error(f"Download error: {e}")
                 raw_err = str(e)
-                if any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot")):
+                if any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot", "ndus", "appicrypt", "terabox links require", "diskwala links are protected")):
                     help_note = (
-                        "\n\n💡 <b>Authentication Notice:</b> This platform is currently requiring login credentials or cookies. "
-                        f"Admin can upload an updated <code>cookies.txt</code> using <code>/cookies</code>."
+                        "\n\n💡 <b>Configuration / Auth Notice:</b> This platform requires a valid session or API key. "
+                        f"Admin can upload an updated <code>cookies.txt</code> using <code>/cookies</code> or configure credentials in <code>.env</code>."
                     )
                 elif any(x in raw_err.lower() for x in ("too large", "limit", "exceeds")):
                     help_note = (
