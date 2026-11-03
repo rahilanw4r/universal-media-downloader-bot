@@ -1197,16 +1197,6 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         )
 
 
-async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Inform user that /mode and quality pickers have been permanently removed."""
-    if update.effective_message:
-        await update.effective_message.reply_text(
-            "ℹ️ <b>Quality Picker Removed:</b> The <code>/mode</code> command and resolution buttons have been permanently removed.\n\n"
-            "All media is now automatically downloaded directly in full original quality with zero clicks!",
-            parse_mode=ParseMode.HTML,
-        )
-
-
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /mp3 and /audio commands to directly extract MP3."""
     if not await check_user_auth(update, context):
@@ -1563,7 +1553,6 @@ def main():
     app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
-    app.add_handler(CommandHandler("mode", mode_command))
 
     # Buttons callback
     app.add_handler(CallbackQueryHandler(button_callback_handler))
