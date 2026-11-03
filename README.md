@@ -41,10 +41,8 @@
 - **🚀 2,000 MB (2 GB) File Delivery:** Connects to Telegram's official Local Bot API server (`telegram-bot-api`) to bypass the standard 50 MB bot upload limit and send videos up to **2 GB (2,000 MB)**.
 - **💎 100% Original Quality (Lossless Delivery):** Media files are preserved in their exact native resolution and bitrate without lossy re-encoding or forced downscaling.
 - **✂️ Zero-Loss Video Auto-Splitting:** When a video exceeds Telegram's size ceiling (50 MB cloud or 2,000 MB local), it is automatically sliced into sequential parts (`Part 1/N`, `Part 2/N`) using FFmpeg stream copying (`-c copy`) in 1–2 seconds with **zero visual or audio degradation**.
-- **🎛️ Interactive Quality Picker:** Automatically probes video streams and presents instant quality selection buttons:
-  - `[ 💎 1080p FHD ]` `[ 📺 720p HD ]` `[ 📱 480p SD ]` `[ ⚡ 360p Data Saver ]`
-- **⚡ Instant Zero-Click Mode:** Send `/mode` to switch between **Instant Mode** (fastest auto-download with 0 extra clicks) and **Quality Picker** (interactive resolution buttons).
-- **🛑 Instant Task Cancellation:** Cancel running downloads or dismiss active quality picker sessions immediately using `/stop` or `/cancel`.
+- **⚡ Instant Zero-Click Delivery:** Downloads begin immediately upon pasting any link. Zero extra clicks, zero picker prompts—delivers the highest available native resolution and bitrate automatically in 100% original quality.
+- **🛑 Instant Task Cancellation:** Cancel running downloads immediately using `/stop` or `/cancel`.
 - **📊 Real-Time Animated Progress Bar:** Live status updates right on Telegram showing percentage, transfer speed, bytes downloaded, and estimated time of arrival (ETA):
   ```text
   ⏳ Downloading from YouTube...
@@ -85,7 +83,6 @@ flowchart LR
 | Command | Aliases | Description |
 |---|---|---|
 | `/start` | — | Welcome greeting, supported platforms overview, and quick action buttons |
-| `/mode` | — | Toggle between **⚡ Instant Mode** (auto-download) and **🔘 Quality Picker** |
 | `/mp3 <url>` | `/audio` | Extract studio-grade 192kbps MP3 audio with embedded album cover art |
 | `/stop` | `/cancel` | Cancel active downloads, abort long tasks, and clear pending session menus |
 | `/ping` | — | Check server response latency, uptime, and system operational health |

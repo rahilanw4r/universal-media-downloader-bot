@@ -124,11 +124,9 @@ class TestDownloader(unittest.TestCase):
 
     def test_user_modes(self):
         uid = 999999
-        # Default mode is instant
+        # Default and permanent mode is instant (100% original quality)
         self.assertEqual(config.get_user_mode(uid), "instant")
         config.set_user_mode(uid, "picker")
-        self.assertEqual(config.get_user_mode(uid), "picker")
-        config.set_user_mode(uid, "instant")
         self.assertEqual(config.get_user_mode(uid), "instant")
 
     def test_admin_check(self):

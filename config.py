@@ -290,18 +290,13 @@ def is_admin(user) -> bool:
 
 def get_user_mode(user_id: int) -> str:
     """
-    Get user's download mode:
-    'instant' -> Immediately downloads highest quality video (fastest, 0 clicks).
-    'picker'  -> Shows interactive quality buttons (1080p, 720p, 480p, MP3).
+    Get user's download mode.
+    Always returns 'instant' (100% original lossless quality delivery with zero extra clicks).
     """
-    return _user_prefs.get(str(user_id), {}).get("mode", "instant")
+    return "instant"
 
 
 def set_user_mode(user_id: int, mode: str) -> None:
-    """Set user's download mode ('instant' or 'picker')."""
-    uid_str = str(user_id)
-    if uid_str not in _user_prefs:
-        _user_prefs[uid_str] = {}
-    _user_prefs[uid_str]["mode"] = mode
-    _save_prefs()
+    """Deprecated: Retained for backwards compatibility."""
+    pass
 
