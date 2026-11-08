@@ -13,6 +13,8 @@ from downloader import (
     is_diskwala_url,
     extract_diskwala_id,
     is_reddit_url,
+    resolve_reddit_url,
+    extract_v_reddit_id,
     extract_reddit_video_id,
     render_progress_bar,
     MediaDownloader,
@@ -368,6 +370,23 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(extract_reddit_video_id("https://v.redd.it/zv89llsvexdz/HLSPlaylist.m3u8"), "zv89llsvexdz")
         self.assertEqual(extract_reddit_video_id("https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/"), "6rrwyj")
         self.assertEqual(extract_reddit_video_id("https://redd.it/6rrwyj"), "6rrwyj")
+
+        # extract_v_reddit_id checks
+        self.assertEqual(extract_v_reddit_id("https://v.redd.it/zv89llsvexdz"), "zv89llsvexdz")
+        self.assertEqual(extract_v_reddit_id("https://v.redd.it/zv89llsvexdz/HLSPlaylist.m3u8"), "zv89llsvexdz")
+        self.assertIsNone(extract_v_reddit_id("https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/"))
+        self.assertIsNone(extract_v_reddit_id("https://redd.it/6rrwyj"))
+
+        # resolve_reddit_url checks
+        self.assertEqual(resolve_reddit_url("https://www.reddit.com/r/funny/comments/12345/title/"), "https://www.reddit.com/r/funny/comments/12345/title/")
+        from unittest.mock import patch, MagicMock
+        with patch("requests.head") as mock_head:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 307
+            mock_resp.headers = {"Location": "https://www.reddit.com/r/memes/comments/xyz123/canonical/"}
+            mock_head.return_value = mock_resp
+            resolved = resolve_reddit_url("https://www.reddit.com/r/memes/s/abc123xyz")
+            self.assertEqual(resolved, "https://www.reddit.com/r/memes/comments/xyz123/canonical/")
 
     def test_reddit_photo_download_mock(self):
         from unittest.mock import patch, MagicMock
