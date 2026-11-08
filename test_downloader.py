@@ -12,6 +12,8 @@ from downloader import (
     extract_terabox_surl,
     is_diskwala_url,
     extract_diskwala_id,
+    is_reddit_url,
+    extract_reddit_video_id,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -315,6 +317,177 @@ class TestDownloader(unittest.TestCase):
             if "telegram" in str(e):
                 self.skipTest("python-telegram-bot not installed in test environment")
             raise
+
+    def test_reddit_helpers(self):
+        self.assertTrue(is_reddit_url("https://www.reddit.com/r/funny/comments/12345/title/"))
+        self.assertTrue(is_reddit_url("https://reddit.com/r/videos/comments/abc/"))
+        self.assertTrue(is_reddit_url("https://redd.it/12345"))
+        self.assertTrue(is_reddit_url("https://v.redd.it/zv89llsvexdz"))
+        self.assertTrue(is_reddit_url("https://i.redd.it/sample_pic.jpg"))
+        self.assertTrue(is_reddit_url("https://vxreddit.com/comments/12345"))
+        self.assertFalse(is_reddit_url("https://youtube.com/watch?v=123"))
+        self.assertFalse(is_reddit_url("https://instagram.com/p/123"))
+        self.assertFalse(is_reddit_url("https://twitter.com/user/status/123"))
+
+        self.assertEqual(extract_reddit_video_id("https://v.redd.it/zv89llsvexdz"), "zv89llsvexdz")
+        self.assertEqual(extract_reddit_video_id("https://v.redd.it/zv89llsvexdz/HLSPlaylist.m3u8"), "zv89llsvexdz")
+        self.assertEqual(extract_reddit_video_id("https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/"), "6rrwyj")
+        self.assertEqual(extract_reddit_video_id("https://redd.it/6rrwyj"), "6rrwyj")
+
+    def test_reddit_photo_download_mock(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+        from PIL import Image
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            sample_img = temp_path / "sample.jpg"
+            Image.new("RGB", (50, 50), color="blue").save(sample_img, format="JPEG")
+            img_bytes = sample_img.read_bytes()
+
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.iter_content.return_value = [img_bytes]
+            mock_resp.content = img_bytes
+
+            with patch("downloader.requests.get", return_value=mock_resp):
+                res = d._download_reddit("https://i.redd.it/sample_img.jpg", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["type"], "photo")
+                self.assertEqual(res["uploader"], "Reddit")
+                self.assertTrue(Path(res["file_path"]).exists())
+
+    def test_reddit_gallery_download_mock(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+        from PIL import Image
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            sample_img = temp_path / "sample.jpg"
+            Image.new("RGB", (50, 50), color="red").save(sample_img, format="JPEG")
+            img_bytes = sample_img.read_bytes()
+
+            html_content = """
+            <html>
+                <head>
+                    <meta property="og:title" content="Awesome Art Gallery" />
+                    <meta property="og:image" content="https://i.redd.it/img1.jpg" />
+                    <meta property="og:image" content="https://i.redd.it/img2.jpg" />
+                </head>
+            </html>
+            """
+
+            mock_html_resp = MagicMock()
+            mock_html_resp.status_code = 200
+            mock_html_resp.text = html_content
+
+            mock_img_resp = MagicMock()
+            mock_img_resp.status_code = 200
+            mock_img_resp.content = img_bytes
+
+            def mock_get(url, *args, **kwargs):
+                if "vxreddit.com" in url:
+                    return mock_html_resp
+                elif "rapidsave.com" in url:
+                    r = MagicMock()
+                    r.status_code = 404
+                    return r
+                return mock_img_resp
+
+            with patch("downloader.requests.get", side_effect=mock_get):
+                res = d._download_reddit("https://www.reddit.com/gallery/1gl333m", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["type"], "album")
+                self.assertEqual(res["title"], "Awesome Art Gallery")
+                self.assertEqual(len(res["file_paths"]), 2)
+                for p in res["file_paths"]:
+                    self.assertTrue(Path(p).exists())
+
+    def test_reddit_video_download_mock(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            mock_video = temp_path / "test_video.mp4"
+            mock_video.write_bytes(b"dummy mp4 video bytes" * 100)
+
+            mock_rs_html = """
+            <html>
+                <body>
+                    <h2>Funniest Clip Ever</h2>
+                    <a class="downloadbutton" href="https://sd.rapidsave.com/download.php?permalink=...&video_url=https://v.redd.it/zv89llsvexdz/DASH_2_4_M?source=fallback">Download</a>
+                </body>
+            </html>
+            """
+            mock_rs_resp = MagicMock()
+            mock_rs_resp.status_code = 200
+            mock_rs_resp.text = mock_rs_html
+
+            def mock_ytdlp(url, t_dir, **kwargs):
+                return {
+                    "type": "video",
+                    "file_path": mock_video,
+                    "file_paths": [mock_video],
+                    "dir_path": t_dir,
+                    "title": "HLSPlaylist",
+                    "uploader": "Reddit",
+                    "duration": 12,
+                    "thumbnail": None,
+                    "thumb_file": None,
+                    "filesize_mb": 0.5,
+                }
+
+            with patch("downloader.requests.get", return_value=mock_rs_resp):
+                with patch.object(d, "_download_ytdlp", side_effect=mock_ytdlp):
+                    res = d._download_reddit("https://www.reddit.com/r/videos/comments/6rrwyj/test/", temp_path)
+                    self.assertIsNotNone(res)
+                    self.assertEqual(res["type"], "video")
+                    self.assertEqual(res["title"], "Funniest Clip Ever")
+                    self.assertEqual(res["platform"], "Reddit")
+
+    def test_reddit_audio_download_mock(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            mock_mp3 = temp_path / "test_audio.mp3"
+            mock_mp3.write_bytes(b"dummy mp3 audio bytes" * 100)
+
+            mock_rs_html = """
+            <html>
+                <body>
+                    <a class="downloadbutton" href="https://sd.rapidsave.com/download.php?permalink=...&video_url=https://v.redd.it/zv89llsvexdz/DASH_2_4_M?source=fallback">Download</a>
+                </body>
+            </html>
+            """
+            mock_rs_resp = MagicMock()
+            mock_rs_resp.status_code = 200
+            mock_rs_resp.text = mock_rs_html
+
+            class MockYtdl:
+                def __init__(self, opts):
+                    self.opts = opts
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+                def extract_info(self, url, download=True):
+                    return {"duration": 15}
+
+            with patch("downloader.requests.get", return_value=mock_rs_resp):
+                with patch("downloader.yt_dlp.YoutubeDL", MockYtdl):
+                    res = d._download_reddit_audio("https://www.reddit.com/r/videos/comments/6rrwyj/test/", temp_path)
+                    self.assertIsNotNone(res)
+                    self.assertEqual(res["type"], "audio")
+                    self.assertEqual(res["duration"], 15)
+                    self.assertTrue(Path(res["file_path"]).exists())
 
 
 if __name__ == "__main__":

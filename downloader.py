@@ -12,6 +12,8 @@ import logging
 import subprocess
 import http.cookiejar
 import math
+import uuid
+from urllib.parse import quote, unquote, urlparse, parse_qs
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable
 
@@ -19,6 +21,11 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 try:
     import imageio_ffmpeg
@@ -122,6 +129,15 @@ TIKTOK_DOMAINS = (
     "douyin.com",
 )
 
+REDDIT_DOMAINS = (
+    "reddit.com",
+    "redd.it",
+    "v.redd.it",
+    "i.redd.it",
+    "vxreddit.com",
+    "rxddit.com",
+)
+
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 
@@ -168,7 +184,7 @@ def detect_platform(url: str) -> str:
         return "TikTok"
     if any(host == d or host.endswith("." + d) for d in ("pinterest.com", "pin.it")):
         return "Pinterest"
-    if any(host == d or host.endswith("." + d) for d in ("reddit.com", "redd.it")):
+    if any(host == d or host.endswith("." + d) for d in REDDIT_DOMAINS):
         return "Reddit"
     if any(host == d or host.endswith("." + d) for d in ("facebook.com", "fb.watch", "fb.com")):
         return "Facebook"
@@ -221,6 +237,28 @@ def is_tiktok_url(url: str) -> bool:
     """Check if URL belongs to TikTok."""
     host = _get_url_host(url)
     return any(host == d or host.endswith("." + d) for d in TIKTOK_DOMAINS)
+
+
+def is_reddit_url(url: str) -> bool:
+    """Check if URL belongs to Reddit using host matching."""
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in REDDIT_DOMAINS)
+
+
+def extract_reddit_video_id(url_or_text: str) -> Optional[str]:
+    """Extract Reddit video or post ID if present."""
+    if not url_or_text:
+        return None
+    m = re.search(r"v\.redd\.it(?:/|%2F)([a-zA-Z0-9_-]+)", url_or_text)
+    if m:
+        return m.group(1)
+    m = re.search(r"/comments/([a-zA-Z0-9]+)", url_or_text)
+    if m:
+        return m.group(1)
+    m = re.search(r"redd\.it/([a-zA-Z0-9]+)", url_or_text)
+    if m:
+        return m.group(1)
+    return None
 
 
 def is_terabox_url(url: str) -> bool:
@@ -1779,6 +1817,338 @@ class MediaDownloader:
 
         return None
 
+    def _download_reddit(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Specialized extractor for Reddit posts.
+        Handles:
+          - Direct i.redd.it images
+          - Direct v.redd.it videos (via HLSPlaylist m3u8)
+          - Video posts with audio merging via RapidSave and direct HLS
+          - Multi-image photo albums/galleries and single photos via vxreddit
+        """
+        if not requests:
+            return None
+
+        host = _get_url_host(url)
+        clean_url = url.split("?")[0]
+
+        # 1. Direct i.redd.it image or direct image extension
+        if host == "i.redd.it" or host.endswith(".i.redd.it") or any(clean_url.lower().endswith(ext) for ext in IMAGE_EXTS):
+            try:
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                    )
+                }
+                r = requests.get(url, headers=headers, stream=True, timeout=30)
+                if r.status_code == 200:
+                    ext = Path(clean_url).suffix or ".jpg"
+                    fpath = temp_dir / f"reddit_image_{uuid.uuid4().hex[:8]}{ext}"
+                    with open(fpath, "wb") as f:
+                        for chunk in r.iter_content(65536):
+                            f.write(chunk)
+                    valid_img = sanitize_image_file(fpath) or fpath
+                    mb = valid_img.stat().st_size / (1024 * 1024)
+                    return {
+                        "type": "photo",
+                        "file_path": valid_img,
+                        "file_paths": [valid_img],
+                        "dir_path": temp_dir,
+                        "title": "Reddit Image",
+                        "uploader": "Reddit",
+                        "duration": 0,
+                        "thumbnail": url,
+                        "filesize_mb": mb,
+                    }
+            except Exception as e:
+                logger.warning("Direct i.redd.it download failed: %s", e)
+
+        # 2. Direct v.redd.it link
+        if "v.redd.it" in host:
+            vid = extract_reddit_video_id(url)
+            if vid:
+                hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
+                try:
+                    res = self._download_ytdlp(hls_url, temp_dir, progress_callback=progress_callback)
+                    if res:
+                        res["platform"] = "Reddit"
+                        res["title"] = res.get("title") or "Reddit Video"
+                        if res["title"] == "HLSPlaylist":
+                            res["title"] = "Reddit Video"
+                        return res
+                except Exception as e:
+                    logger.info("Direct v.redd.it HLS download failed: %s", e)
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+        }
+
+        # 3. RapidSave video extractor
+        try:
+            rs_url = f"https://rapidsave.com/info?url={quote(url, safe='')}"
+            resp = requests.get(rs_url, headers=headers, timeout=12)
+            if resp.status_code == 200 and BeautifulSoup:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                dl_btn = soup.find("a", class_="downloadbutton")
+                if dl_btn and dl_btn.get("href"):
+                    dl_href = dl_btn["href"]
+                    post_title_el = soup.find("h2", class_="text-truncate") or soup.find("h2") or soup.find("h1")
+                    page_title = post_title_el.text.strip() if post_title_el else "Reddit Video"
+
+                    # Try HLS first for best audio/video quality
+                    vid = extract_reddit_video_id(dl_href)
+                    if vid:
+                        hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
+                        try:
+                            res = self._download_ytdlp(hls_url, temp_dir, progress_callback=progress_callback)
+                            if res:
+                                res["platform"] = "Reddit"
+                                res["title"] = page_title
+                                return res
+                        except Exception as e:
+                            logger.info("yt-dlp via RapidSave HLS failed, trying direct stream: %s", e)
+
+                    # Direct stream from RapidSave
+                    target_dl = dl_href if dl_href.startswith("http") else f"https://rapidsave.com{dl_href}"
+                    fpath = temp_dir / f"reddit_{uuid.uuid4().hex[:8]}.mp4"
+                    r = requests.get(target_dl, headers=headers, stream=True, timeout=60)
+                    if r.status_code == 200:
+                        with open(fpath, "wb") as f:
+                            for chunk in r.iter_content(65536):
+                                f.write(chunk)
+                        if fpath.exists() and fpath.stat().st_size > 1000:
+                            mb = fpath.stat().st_size / (1024 * 1024)
+                            thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
+                            return {
+                                "type": "video",
+                                "file_path": fpath,
+                                "file_paths": [fpath],
+                                "dir_path": temp_dir,
+                                "title": page_title,
+                                "uploader": "Reddit",
+                                "duration": 0,
+                                "thumbnail": None,
+                                "thumb_file": thumb_file,
+                                "filesize_mb": mb,
+                            }
+        except Exception as rs_err:
+            logger.debug("RapidSave extraction failed: %s", rs_err)
+
+        # 4. vxreddit parser (handles albums, single photos, and video fallback)
+        try:
+            # Map /gallery/<id> to /comments/<id> for vxreddit
+            clean_reddit_url = re.sub(r"/gallery/([a-zA-Z0-9]+)", r"/comments/\1", url)
+            vx_url = re.sub(r"https?://(?:www\.|old\.)?reddit\.com", "https://vxreddit.com", clean_reddit_url)
+            if "vxreddit.com" not in vx_url:
+                m_rid = re.search(r"redd\.it/([a-zA-Z0-9]+)", url)
+                if m_rid:
+                    vx_url = f"https://vxreddit.com/comments/{m_rid.group(1)}"
+
+            vx_headers = {"User-Agent": "TelegramBot (like TwitterBot)"}
+            resp = requests.get(vx_url, headers=vx_headers, timeout=12)
+            if resp.status_code == 200 and BeautifulSoup:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                title_meta = soup.find("meta", property="og:title")
+                title = title_meta["content"].strip() if title_meta and title_meta.get("content") else "Reddit Post"
+                if title == "vxReddit":
+                    title = "Reddit Post"
+
+                # Check if it has a video
+                vid_meta = soup.find("meta", property="og:video") or soup.find("meta", property="twitter:player:stream")
+                if vid_meta and vid_meta.get("content"):
+                    vid_content = vid_meta["content"]
+                    vid = extract_reddit_video_id(vid_content)
+                    if vid:
+                        hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
+                        try:
+                            res = self._download_ytdlp(hls_url, temp_dir, progress_callback=progress_callback)
+                            if res:
+                                res["platform"] = "Reddit"
+                                res["title"] = title
+                                return res
+                        except Exception:
+                            pass
+
+                    # Stream direct video
+                    fpath = temp_dir / f"reddit_video_{uuid.uuid4().hex[:8]}.mp4"
+                    r_vid = requests.get(vid_content, headers=vx_headers, stream=True, timeout=60)
+                    if r_vid.status_code == 200:
+                        with open(fpath, "wb") as f:
+                            for chunk in r_vid.iter_content(65536):
+                                f.write(chunk)
+                        if fpath.exists() and fpath.stat().st_size > 1000:
+                            mb = fpath.stat().st_size / (1024 * 1024)
+                            thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
+                            return {
+                                "type": "video",
+                                "file_path": fpath,
+                                "file_paths": [fpath],
+                                "dir_path": temp_dir,
+                                "title": title,
+                                "uploader": "Reddit",
+                                "duration": 0,
+                                "thumbnail": None,
+                                "thumb_file": thumb_file,
+                                "filesize_mb": mb,
+                            }
+
+                # Check images
+                img_metas = soup.find_all("meta", property="og:image")
+                img_urls = []
+                for im in img_metas:
+                    c = im.get("content")
+                    if c and c not in img_urls and not any(skip in c for skip in ("redditstatic", "favicon")):
+                        img_urls.append(c)
+
+                if img_urls:
+                    downloaded_images: List[Path] = []
+                    for idx, i_url in enumerate(img_urls):
+                        try:
+                            ext = Path(i_url.split("?")[0]).suffix or ".jpg"
+                            fpath = temp_dir / f"reddit_{idx}_{uuid.uuid4().hex[:6]}{ext}"
+                            r_img = requests.get(i_url, headers=headers, timeout=20)
+                            if r_img.status_code == 200 and r_img.content:
+                                fpath.write_bytes(r_img.content)
+                                valid = sanitize_image_file(fpath)
+                                if valid:
+                                    downloaded_images.append(valid)
+                        except Exception as e:
+                            logger.warning("Error downloading reddit image %s: %s", i_url, e)
+
+                    if len(downloaded_images) == 1:
+                        mb = downloaded_images[0].stat().st_size / (1024 * 1024)
+                        return {
+                            "type": "photo",
+                            "file_path": downloaded_images[0],
+                            "file_paths": downloaded_images,
+                            "dir_path": temp_dir,
+                            "title": title,
+                            "uploader": "Reddit",
+                            "duration": 0,
+                            "thumbnail": img_urls[0],
+                            "filesize_mb": mb,
+                        }
+                    elif len(downloaded_images) > 1:
+                        mb = sum(f.stat().st_size for f in downloaded_images) / (1024 * 1024)
+                        return {
+                            "type": "album",
+                            "file_path": downloaded_images[0],
+                            "file_paths": downloaded_images,
+                            "dir_path": temp_dir,
+                            "title": title,
+                            "uploader": "Reddit",
+                            "duration": 0,
+                            "thumbnail": img_urls[0],
+                            "filesize_mb": mb,
+                        }
+        except Exception as vx_err:
+            logger.debug("vxreddit extraction failed: %s", vx_err)
+
+        return None
+
+    def _download_reddit_audio(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Download Reddit video post audio as MP3."""
+        vid = extract_reddit_video_id(url)
+        if not vid and requests:
+            try:
+                rs_url = f"https://rapidsave.com/info?url={quote(url, safe='')}"
+                headers = {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                    )
+                }
+                resp = requests.get(rs_url, headers=headers, timeout=10)
+                if resp.status_code == 200 and BeautifulSoup:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    dl_btn = soup.find("a", class_="downloadbutton")
+                    if dl_btn and dl_btn.get("href"):
+                        vid = extract_reddit_video_id(dl_btn["href"])
+            except Exception:
+                pass
+
+        if not vid and requests:
+            try:
+                vx_url = re.sub(r"https?://(?:www\.|old\.)?reddit\.com", "https://vxreddit.com", url)
+                resp = requests.get(vx_url, headers={"User-Agent": "TelegramBot"}, timeout=10)
+                if resp.status_code == 200 and BeautifulSoup:
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    vid_meta = soup.find("meta", property="og:video") or soup.find("meta", property="twitter:player:stream")
+                    if vid_meta and vid_meta.get("content"):
+                        vid = extract_reddit_video_id(vid_meta["content"])
+            except Exception:
+                pass
+
+        if vid and yt_dlp:
+            hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
+            ydl_opts = self._get_ydl_base_opts()
+            ydl_opts.update({
+                "paths": {"home": temp_dir.as_posix()},
+                "outtmpl": {"default": "%(id).30s.%(ext)s"},
+                "format": "bestaudio/best",
+                "writethumbnail": False,
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    },
+                    {
+                        "key": "FFmpegMetadata",
+                        "add_metadata": True,
+                    },
+                ],
+            })
+            if progress_callback:
+                def _hook(d):
+                    if d.get("status") == "downloading":
+                        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                        downloaded = d.get("downloaded_bytes") or 0
+                        speed = d.get("speed") or 0
+                        eta = d.get("eta") or 0
+                        percent = (downloaded / total * 100) if total > 0 else 0
+                        progress_callback({
+                            "percent": percent,
+                            "downloaded": downloaded,
+                            "total": total,
+                            "speed": speed,
+                            "eta": eta,
+                        })
+                ydl_opts["progress_hooks"] = [_hook]
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(hls_url, download=True)
+                mp3_files = list(temp_dir.glob("*.mp3"))
+                if mp3_files:
+                    fpath = mp3_files[0]
+                    mb = fpath.stat().st_size / (1024 * 1024)
+                    return {
+                        "type": "audio",
+                        "file_path": fpath,
+                        "file_paths": [fpath],
+                        "dir_path": temp_dir,
+                        "title": "Reddit Audio",
+                        "uploader": "Reddit",
+                        "duration": int(info.get("duration") or 0),
+                        "thumbnail": None,
+                        "filesize_mb": mb,
+                    }
+        return None
+
     def _download_gallery_dl(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """Fallback extractor for image posts/galleries/carousels using gallery-dl."""
         try:
@@ -2259,7 +2629,16 @@ class MediaDownloader:
                 except Exception as e:
                     logger.warning(f"Instagram engine error, trying fallback: {e}")
 
-            # 3. Main yt-dlp download (handles YouTube, Instagram, TikTok, Reddit, Pinterest, Facebook, etc.)
+            # 6. Specialized Reddit Downloader (videos with merged audio, single images, photo galleries)
+            if is_reddit_url(url):
+                try:
+                    red_res = await asyncio.to_thread(self._download_reddit, url, temp_dir, progress_callback)
+                    if red_res:
+                        return red_res
+                except Exception as e:
+                    logger.warning(f"Reddit specialized extractor error, trying fallback: {e}")
+
+            # 7. Main yt-dlp download (handles YouTube, Instagram, TikTok, Reddit, Pinterest, Facebook, etc.)
             try:
                 return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, resolution, progress_callback)
             except Exception as ytdl_err:
@@ -2313,6 +2692,15 @@ class MediaDownloader:
                     return tt_audio
             except Exception as e:
                 logger.warning(f"TikTok direct audio extraction error: {e}")
+
+        # Specialized Reddit direct audio extraction
+        if is_reddit_url(url):
+            try:
+                red_audio = await asyncio.to_thread(self._download_reddit_audio, url, temp_dir, progress_callback)
+                if red_audio:
+                    return red_audio
+            except Exception as e:
+                logger.warning(f"Reddit direct audio extraction error: {e}")
 
         ydl_opts = self._get_ydl_base_opts()
         ydl_opts.update({
