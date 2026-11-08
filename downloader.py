@@ -379,6 +379,25 @@ class MediaDownloader:
             self.download_dir = download_dir
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
+    def _is_valid_cookie_file(self, path: Optional[Path]) -> bool:
+        """Verify that the cookie file exists, is non-empty, and has valid Netscape formatted lines."""
+        if not path:
+            return False
+        try:
+            p = Path(path)
+            if not p.exists() or p.stat().st_size < 10:
+                return False
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if len(line.split("\t")) == 7:
+                        return True
+            return False
+        except Exception:
+            return False
+
     def _get_ydl_base_opts(
         self,
         use_cookies: bool = True,
@@ -400,7 +419,7 @@ class MediaDownloader:
         # Check for valid cookies file
         cookie_file = getattr(config, "COOKIES_FILE", None)
         has_cookies = False
-        if use_cookies and cookie_file and Path(cookie_file).exists() and Path(cookie_file).stat().st_size > 10:
+        if use_cookies and self._is_valid_cookie_file(cookie_file):
             opts["cookiefile"] = str(cookie_file)
             has_cookies = True
 
@@ -1623,7 +1642,7 @@ class MediaDownloader:
                     max_connection_attempts=2,
                     dirname_pattern=str(temp_dir),
                 )
-                if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
+                if getattr(config, "COOKIES_FILE", None) and self._is_valid_cookie_file(config.COOKIES_FILE):
                     try:
                         cj = http.cookiejar.MozillaCookieJar(str(config.COOKIES_FILE))
                         cj.load(ignore_discard=True, ignore_expires=True)
@@ -2160,7 +2179,7 @@ class MediaDownloader:
             else:
                 cmd = [sys.executable, "-m", "gallery_dl", "--dest", str(temp_dir), "--no-mtime"]
 
-            if getattr(config, "COOKIES_FILE", None) and Path(config.COOKIES_FILE).exists():
+            if getattr(config, "COOKIES_FILE", None) and self._is_valid_cookie_file(config.COOKIES_FILE):
                 cmd.extend(["--cookies", str(config.COOKIES_FILE)])
 
             cmd.append(url)
@@ -2386,10 +2405,13 @@ class MediaDownloader:
             ydl_opts["progress_hooks"] = [_hook]
 
         is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
+        has_cookies = self._is_valid_cookie_file(getattr(config, "COOKIES_FILE", None))
 
         attempts = [{"use_cookies": True, "clients": None}]
-        if is_youtube:
+        if has_cookies:
+            # Fallback to cookie-less attempt if cookies fail or are rejected
             attempts.append({"use_cookies": False, "clients": None})
+        if is_youtube:
             attempts.append({"use_cookies": False, "clients": ["web", "mweb"]})
             attempts.append({"use_cookies": False, "clients": ["tv_embedded", "android", "ios"]})
 
@@ -2427,6 +2449,9 @@ class MediaDownloader:
                         "login",
                         "429",
                         "400",
+                        "403",
+                        "forbidden",
+                        "netscape",
                         "precondition check failed",
                         "failed to extract any player response",
                         "requested format is not available",
@@ -2435,9 +2460,9 @@ class MediaDownloader:
                         "unavailable",
                     )
                 )
-                if is_youtube and is_retryable and att_idx < len(attempts) - 1:
+                if is_retryable and att_idx < len(attempts) - 1:
                     logger.warning(
-                        "YouTube attempt %d failed (%s); retrying with alternative client...",
+                        "Download attempt %d failed (%s); retrying with alternative configuration...",
                         att_idx + 1,
                         err,
                     )
@@ -2741,9 +2766,12 @@ class MediaDownloader:
 
         def _download():
             is_youtube = ("youtube.com" in url.lower() or "youtu.be" in url.lower())
+            has_cookies = self._is_valid_cookie_file(getattr(config, "COOKIES_FILE", None))
+
             attempts = [{"use_cookies": True, "clients": None}]
-            if is_youtube:
+            if has_cookies:
                 attempts.append({"use_cookies": False, "clients": None})
+            if is_youtube:
                 attempts.append({"use_cookies": False, "clients": ["web", "mweb"]})
                 attempts.append({"use_cookies": False, "clients": ["tv_embedded", "android", "ios"]})
 
@@ -2787,6 +2815,9 @@ class MediaDownloader:
                             "login",
                             "429",
                             "400",
+                            "403",
+                            "forbidden",
+                            "netscape",
                             "precondition check failed",
                             "failed to extract any player response",
                             "requested format is not available",
@@ -2795,8 +2826,8 @@ class MediaDownloader:
                             "unavailable",
                         )
                     )
-                    if is_youtube and is_retryable and att_idx < len(attempts) - 1:
-                        logger.warning("Audio download attempt failed (%s), retrying with alternative client...", e)
+                    if is_retryable and att_idx < len(attempts) - 1:
+                        logger.warning("Audio download attempt %d failed (%s), retrying with alternative configuration...", att_idx + 1, e)
                         continue
                     raise
 

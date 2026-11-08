@@ -182,6 +182,41 @@ class TestDownloader(unittest.TestCase):
         cleaned_b64 = config._clean_cookie_content(b64)
         self.assertIn("LOGIN_INFO", cleaned_b64)
 
+        # Test JSON cookie normalization (EditThisCookie format)
+        import json
+        json_cookies = json.dumps([
+            {"domain": ".youtube.com", "name": "LOGIN_INFO", "value": "json_token", "path": "/", "secure": True},
+            {"domain": ".instagram.com", "name": "sessionid", "value": "ig_sess", "path": "/", "secure": True},
+        ])
+        cleaned_json = config._clean_cookie_content(json_cookies)
+        self.assertTrue(cleaned_json.startswith("# Netscape HTTP Cookie File"))
+        self.assertIn("json_token", cleaned_json)
+        self.assertIn("ig_sess", cleaned_json)
+
+        # Test space-to-tab normalization
+        space_cookie = ".youtube.com   TRUE   /   TRUE   1799999999   LOGIN_INFO   space123"
+        cleaned_space = config._clean_cookie_content(space_cookie)
+        self.assertIn("\tLOGIN_INFO\tspace123", cleaned_space)
+
+        # Test raw header format normalization (key=val; key2=val2)
+        header_cookie = "LOGIN_INFO=hdr123; sessionid=ig456; ndus=tb789"
+        cleaned_header = config._clean_cookie_content(header_cookie)
+        self.assertIn("hdr123", cleaned_header)
+        self.assertIn("ig456", cleaned_header)
+        self.assertIn("tb789", cleaned_header)
+
+        # Test cookie file validation helper
+        d = MediaDownloader()
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            valid_file = Path(td) / "valid.txt"
+            valid_file.write_text(cleaned)
+            self.assertTrue(d._is_valid_cookie_file(valid_file))
+
+            bad_file = Path(td) / "bad.txt"
+            bad_file.write_text("random junk that is not cookies")
+            self.assertFalse(d._is_valid_cookie_file(bad_file))
+
         # Test cookie status diagnostics
         status = config.get_cookies_status()
         self.assertIn("loaded", status)

@@ -1357,7 +1357,7 @@ async def clean_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /cookies - Admin diagnostic command to check YouTube and platform cookies status."""
+    """Handle /cookies - Admin diagnostic command to check YouTube and platform cookies status, or /cookies clear."""
     if not await check_user_auth(update, context):
         return
 
@@ -1368,6 +1368,35 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode=ParseMode.HTML,
         )
         return
+
+    # Check if admin provided arguments (e.g. /cookies clear or /cookies <raw text>)
+    if context.args:
+        arg_lower = context.args[0].lower()
+        if arg_lower in ("clear", "delete", "reset", "remove"):
+            config.delete_cookies_file()
+            await update.message.reply_text(
+                "🗑️ <b>Cookies Cleared!</b>\n\n"
+                "The saved <code>cookies.txt</code> file has been removed.\n"
+                "The bot is now operating in cookie-less mobile client bypass mode.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
+        # Attempt to parse pasted cookie content directly
+        raw_text = update.message.text.split(None, 1)[1] if " " in update.message.text else ""
+        if raw_text and config.save_cookies_file(raw_text):
+            st = config.get_cookies_status()
+            await update.message.reply_text(
+                f"✅ <b>Cookies Updated Successfully!</b>\n\n"
+                f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
+                f"• <b>YouTube Cookies:</b> <code>{st.get('youtube_cookies', 0)}</code>\n"
+                f"• <b>Instagram Cookies:</b> <code>{st.get('instagram_cookies', 0)}</code>\n"
+                f"• <b>TeraBox Cookies:</b> <code>{st.get('terabox_cookies', 0)}</code>\n"
+                f"• <b>Saved to:</b> <code>{html.escape(str(st.get('path')))}</code>\n\n"
+                f"🎉 The bot is now using your updated cookies for all downloads!",
+                parse_mode=ParseMode.HTML,
+            )
+            return
 
     st = config.get_cookies_status()
     api_st = config.get_api_server_info()
@@ -1392,16 +1421,16 @@ async def cookies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"• <b>TeraBox:</b> <code>{st.get('terabox_cookies', 0)}</code> cookies ({tb_login_icon})\n"
         f"• <b>Storage File:</b> <code>{html.escape(str(st.get('path') or 'None'))}</code>\n\n"
         "⚡ <b>Mobile Client Bypass:</b> YouTube downloads automatically use iOS/Android bypass when cookies expire.\n\n"
-        "📤 <b>How to Update Cookies:</b>\n"
-        "1. Export your cookies using the <b>'Get cookies.txt LOCALLY'</b> browser extension.\n"
-        "2. Send or forward the <code>cookies.txt</code> file directly to this chat.\n"
-        "3. The bot validates and activates it with zero downtime!"
+        "📤 <b>How to Manage Cookies:</b>\n"
+        "1. Send or forward a <code>cookies.txt</code> or <code>cookies.json</code> file to this chat.\n"
+        "2. Or paste cookies via <code>/cookies &lt;content&gt;</code>.\n"
+        "3. Clear cookies anytime with <code>/cookies clear</code>."
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
 async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Allow admin to send cookies.txt directly to the bot to update authentication."""
+    """Allow admin to send cookies.txt or cookies.json directly to the bot to update authentication."""
     message = update.message
     if not message or not message.document:
         return
@@ -1413,7 +1442,7 @@ async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_T
     doc = message.document
     filename = (doc.file_name or "").lower()
 
-    if not (filename.endswith(".txt") or "cookie" in filename):
+    if not (filename.endswith((".txt", ".json", ".tsv")) or "cookie" in filename):
         return
 
     status_msg = await message.reply_text("⏳ <i>Processing cookies document...</i>", parse_mode=ParseMode.HTML)
@@ -1423,13 +1452,6 @@ async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_T
         file_bytes = await file.download_as_bytearray()
         content = file_bytes.decode("utf-8", errors="ignore")
 
-        if not ("\t" in content or "youtube" in content or "Netscape" in content):
-            await status_msg.edit_text(
-                "❌ <b>Invalid Cookie File:</b> The file does not look like a valid Netscape cookie file.",
-                parse_mode=ParseMode.HTML,
-            )
-            return
-
         success = config.save_cookies_file(content)
         if success:
             st = config.get_cookies_status()
@@ -1438,12 +1460,17 @@ async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"• <b>Total Cookies:</b> <code>{st.get('total_cookies', 0)}</code>\n"
                 f"• <b>YouTube Cookies:</b> <code>{st.get('youtube_cookies', 0)}</code>\n"
                 f"• <b>Instagram Cookies:</b> <code>{st.get('instagram_cookies', 0)}</code>\n"
+                f"• <b>TeraBox Cookies:</b> <code>{st.get('terabox_cookies', 0)}</code>\n"
                 f"• <b>Saved to:</b> <code>{html.escape(str(st.get('path')))}</code>\n\n"
                 f"🎉 The bot is now using your updated cookies for all downloads!",
                 parse_mode=ParseMode.HTML,
             )
         else:
-            await status_msg.edit_text("❌ Failed to save cookies file.", parse_mode=ParseMode.HTML)
+            await status_msg.edit_text(
+                "❌ <b>Invalid Cookie Content:</b> Could not parse any valid cookie entries from file. "
+                "Supported formats: Netscape tab-separated text or JSON (EditThisCookie/Cookie-Editor).",
+                parse_mode=ParseMode.HTML,
+            )
     except Exception as e:
         logger.exception("Error updating cookies from document")
         await status_msg.edit_text(
