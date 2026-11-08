@@ -134,6 +134,9 @@ REDDIT_DOMAINS = (
     "redd.it",
     "v.redd.it",
     "i.redd.it",
+    "preview.redd.it",
+    "reddit.app.link",
+    "redditmedia.com",
     "vxreddit.com",
     "rxddit.com",
 )
@@ -155,6 +158,8 @@ def _get_url_host(url: str) -> str:
         return ""
     try:
         from urllib.parse import urlparse
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
         host = urlparse(url).netloc.lower()
         if ":" in host:
             host = host.split(":")[0]
@@ -240,16 +245,30 @@ def is_tiktok_url(url: str) -> bool:
 
 
 def is_reddit_url(url: str) -> bool:
-    """Check if URL belongs to Reddit using host matching."""
+    """Check if URL belongs to Reddit using host and path matching."""
+    if not url:
+        return False
     host = _get_url_host(url)
-    return any(host == d or host.endswith("." + d) for d in REDDIT_DOMAINS)
+    if any(host == d or host.endswith("." + d) for d in REDDIT_DOMAINS):
+        return True
+    u_lower = url.lower()
+    return any(d in u_lower for d in ("reddit.com", "redd.it", "v.redd.it", "i.redd.it", "preview.redd.it", "reddit.app.link"))
 
 
 def resolve_reddit_url(url: str) -> str:
-    """Resolve shortened /s/ Reddit share URLs to canonical post URLs."""
+    """Resolve shortened /s/, redd.it, or mobile app Reddit share URLs to canonical post URLs."""
     if not url:
         return url
-    if "/s/" in url and requests:
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    needs_resolving = (
+        "/s/" in url
+        or "redd.it/" in url
+        or "reddit.app.link" in url
+        or "/sharing/link" in url
+    )
+    if needs_resolving and requests:
         mobile_ua = (
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
             "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
@@ -260,15 +279,15 @@ def resolve_reddit_url(url: str) -> str:
                 loc = r.headers["Location"]
                 if loc.startswith("/"):
                     loc = f"https://www.reddit.com{loc}"
-                if "reddit.com" in loc or "redd.it" in loc:
+                if "reddit.com" in loc or "redd.it" in loc or "v.redd.it" in loc:
                     return loc
-            elif r.status_code == 405:
+            elif r.status_code in (403, 405):
                 r = requests.get(url, headers={"User-Agent": mobile_ua}, allow_redirects=False, stream=True, timeout=8)
                 if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
                     loc = r.headers["Location"]
                     if loc.startswith("/"):
                         loc = f"https://www.reddit.com{loc}"
-                    if "reddit.com" in loc or "redd.it" in loc:
+                    if "reddit.com" in loc or "redd.it" in loc or "v.redd.it" in loc:
                         return loc
         except Exception:
             pass
@@ -1885,56 +1904,59 @@ class MediaDownloader:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Specialized extractor for Reddit posts.
-        Handles:
-          - Direct i.redd.it images
-          - Direct v.redd.it videos (via HLSPlaylist m3u8)
-          - Video posts with audio merging via RapidSave and direct HLS
-          - Multi-image photo albums/galleries and single photos via vxreddit
+        Specialized multi-engine Reddit downloader.
+        Downloads videos with full audio tracks, single photo posts, multi-photo albums/carousels,
+        and GIFs without ever triggering Reddit account authentication or Cloudflare blocks.
         """
         if not requests:
             return None
 
-        # Resolve mobile share links and strip tracking query parameters
+        # 1. Normalize and resolve URL
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
         url = resolve_reddit_url(url)
-        clean_url = url.split("?")[0]
+        clean_url = url.split("?")[0].rstrip("/")
         host = _get_url_host(clean_url)
 
-        # 1. Direct i.redd.it image or direct image extension
-        if host == "i.redd.it" or host.endswith(".i.redd.it") or any(clean_url.lower().endswith(ext) for ext in IMAGE_EXTS):
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+        }
+
+        # Step 1: Direct image link (i.redd.it, preview.redd.it, or image extensions)
+        if host in ("i.redd.it", "preview.redd.it") or host.endswith(".i.redd.it") or any(clean_url.lower().endswith(ext) for ext in IMAGE_EXTS):
             try:
-                headers = {
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                    )
-                }
                 r = requests.get(clean_url, headers=headers, stream=True, timeout=30)
                 if r.status_code == 200:
                     ext = Path(clean_url).suffix or ".jpg"
+                    if ext.lower() not in IMAGE_EXTS:
+                        ext = ".jpg"
                     fpath = temp_dir / f"reddit_image_{uuid.uuid4().hex[:8]}{ext}"
                     with open(fpath, "wb") as f:
                         for chunk in r.iter_content(65536):
                             f.write(chunk)
                     valid_img = sanitize_image_file(fpath) or fpath
-                    mb = valid_img.stat().st_size / (1024 * 1024)
-                    return {
-                        "type": "photo",
-                        "file_path": valid_img,
-                        "file_paths": [valid_img],
-                        "dir_path": temp_dir,
-                        "title": "Reddit Image",
-                        "uploader": "Reddit",
-                        "duration": 0,
-                        "thumbnail": clean_url,
-                        "filesize_mb": mb,
-                    }
+                    if valid_img.exists() and valid_img.stat().st_size > 100:
+                        mb = valid_img.stat().st_size / (1024 * 1024)
+                        return {
+                            "type": "photo",
+                            "file_path": valid_img,
+                            "file_paths": [valid_img],
+                            "dir_path": temp_dir,
+                            "title": "Reddit Image",
+                            "uploader": "Reddit",
+                            "duration": 0,
+                            "thumbnail": clean_url,
+                            "filesize_mb": mb,
+                        }
             except Exception as e:
-                logger.warning("Direct i.redd.it download failed: %s", e)
+                logger.warning(f"Direct Reddit image download failed: {e}")
 
-        # 2. Direct v.redd.it link
+        # Step 2: Direct v.redd.it video link
         if "v.redd.it" in host:
-            vid = extract_reddit_video_id(clean_url)
+            vid = extract_v_reddit_id(clean_url) or extract_reddit_video_id(clean_url)
             if vid:
                 hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
                 try:
@@ -1948,14 +1970,133 @@ class MediaDownloader:
                 except Exception as e:
                     logger.info("Direct v.redd.it HLS download failed: %s", e)
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+        # Step 3: Jackhammer Media API (handles video, photo, and gallery/carousels)
+        try:
+            # Check gallery first
+            gallery_res = requests.get(
+                "https://jackhammer.pythonanywhere.com/reddit/media/gallery",
+                params={"url": clean_url},
+                timeout=10,
             )
-        }
+            if gallery_res.status_code == 200 and gallery_res.text:
+                try:
+                    gallery_urls = json.loads(gallery_res.text)
+                    if isinstance(gallery_urls, list) and len(gallery_urls) > 0:
+                        post_title = "Reddit Album"
+                        try:
+                            t_res = requests.get(
+                                "https://jackhammer.pythonanywhere.com/reddit/media/title",
+                                params={"url": clean_url},
+                                timeout=6,
+                            )
+                            if t_res.status_code == 200 and t_res.text.strip() and not t_res.text.strip().startswith("<"):
+                                post_title = t_res.text.strip()
+                        except Exception:
+                            pass
 
-        # 3. RapidSave / RedditSave video extractor
+                        downloaded_imgs: List[Path] = []
+                        for idx, g_url in enumerate(gallery_urls):
+                            try:
+                                ext = Path(g_url.split("?")[0]).suffix or ".jpg"
+                                if ext.lower() not in IMAGE_EXTS:
+                                    ext = ".jpg"
+                                fpath = temp_dir / f"reddit_gallery_{idx}_{uuid.uuid4().hex[:6]}{ext}"
+                                r_img = requests.get(g_url, headers=headers, timeout=25)
+                                if r_img.status_code == 200 and r_img.content:
+                                    fpath.write_bytes(r_img.content)
+                                    clean_img = sanitize_image_file(fpath) or fpath
+                                    if clean_img.exists() and clean_img.stat().st_size > 100:
+                                        downloaded_imgs.append(clean_img)
+                            except Exception as ge:
+                                logger.warning(f"Error downloading gallery item {idx}: {ge}")
+
+                        if len(downloaded_imgs) == 1:
+                            mb = downloaded_imgs[0].stat().st_size / (1024 * 1024)
+                            return {
+                                "type": "photo",
+                                "file_path": downloaded_imgs[0],
+                                "file_paths": downloaded_imgs,
+                                "dir_path": temp_dir,
+                                "title": post_title,
+                                "uploader": "Reddit",
+                                "duration": 0,
+                                "thumbnail": gallery_urls[0],
+                                "filesize_mb": mb,
+                            }
+                        elif len(downloaded_imgs) > 1:
+                            mb = sum(f.stat().st_size for f in downloaded_imgs) / (1024 * 1024)
+                            return {
+                                "type": "album",
+                                "file_path": downloaded_imgs[0],
+                                "file_paths": downloaded_imgs,
+                                "dir_path": temp_dir,
+                                "title": post_title,
+                                "uploader": "Reddit",
+                                "duration": 0,
+                                "thumbnail": gallery_urls[0],
+                                "filesize_mb": mb,
+                            }
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            # Check single media (video or photo)
+            media_res = requests.get(
+                "https://jackhammer.pythonanywhere.com/reddit/media/downloader",
+                params={"url": clean_url},
+                timeout=10,
+            )
+            if media_res.status_code == 200 and media_res.text and media_res.text.strip().startswith("http"):
+                resolved_media = media_res.text.strip().strip('"')
+                post_title = "Reddit Post"
+                try:
+                    t_res = requests.get(
+                        "https://jackhammer.pythonanywhere.com/reddit/media/title",
+                        params={"url": clean_url},
+                        timeout=6,
+                    )
+                    if t_res.status_code == 200 and t_res.text.strip() and not t_res.text.strip().startswith("<"):
+                        post_title = t_res.text.strip()
+                except Exception:
+                    pass
+
+                # If resolved to v.redd.it video
+                if "v.redd.it" in resolved_media:
+                    vid = extract_v_reddit_id(resolved_media)
+                    if vid:
+                        hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
+                        try:
+                            res = self._download_ytdlp(hls_url, temp_dir, progress_callback=progress_callback)
+                            if res:
+                                res["platform"] = "Reddit"
+                                res["title"] = post_title
+                                return res
+                        except Exception as e:
+                            logger.info("yt-dlp via Jackhammer HLS failed: %s", e)
+
+                # If resolved to i.redd.it / image URL
+                elif any(resolved_media.lower().endswith(ext) for ext in IMAGE_EXTS) or "i.redd.it" in resolved_media or "preview.redd.it" in resolved_media:
+                    fpath = temp_dir / f"reddit_image_{uuid.uuid4().hex[:8]}.jpg"
+                    r_img = requests.get(resolved_media, headers=headers, timeout=25)
+                    if r_img.status_code == 200 and r_img.content:
+                        fpath.write_bytes(r_img.content)
+                        clean_img = sanitize_image_file(fpath) or fpath
+                        if clean_img.exists() and clean_img.stat().st_size > 100:
+                            mb = clean_img.stat().st_size / (1024 * 1024)
+                            return {
+                                "type": "photo",
+                                "file_path": clean_img,
+                                "file_paths": [clean_img],
+                                "dir_path": temp_dir,
+                                "title": post_title,
+                                "uploader": "Reddit",
+                                "duration": 0,
+                                "thumbnail": resolved_media,
+                                "filesize_mb": mb,
+                            }
+        except Exception as jh_err:
+            logger.debug(f"Jackhammer API attempt error: {jh_err}")
+
+        # Step 4: RapidSave / RedditSave video extractor
         for save_endpoint in ("https://rapidsave.com/info?url=", "https://redditsave.com/info?url="):
             try:
                 rs_url = f"{save_endpoint}{quote(clean_url, safe='')}"
@@ -2010,9 +2151,8 @@ class MediaDownloader:
             except Exception as rs_err:
                 logger.debug("Save service extraction failed: %s", rs_err)
 
-        # 4. vxreddit parser (handles albums, single photos, and video fallback)
+        # Step 5: vxreddit parser (handles albums, single photos, and video fallback)
         try:
-            # Map /gallery/<id> to /comments/<id> for vxreddit
             clean_reddit_url = re.sub(r"/gallery/([a-zA-Z0-9]+)", r"/comments/\1", clean_url)
             vx_url = re.sub(r"https?://(?:www\.|old\.)?reddit\.com", "https://vxreddit.com", clean_reddit_url)
             if "vxreddit.com" not in vx_url:
@@ -2033,7 +2173,7 @@ class MediaDownloader:
                 vid_meta = soup.find("meta", property="og:video") or soup.find("meta", property="twitter:player:stream")
                 if vid_meta and vid_meta.get("content"):
                     vid_content = vid_meta["content"]
-                    vid = extract_reddit_video_id(vid_content)
+                    vid = extract_v_reddit_id(vid_content)
                     if vid:
                         hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
                         try:
@@ -2085,8 +2225,8 @@ class MediaDownloader:
                             r_img = requests.get(i_url, headers=headers, timeout=20)
                             if r_img.status_code == 200 and r_img.content:
                                 fpath.write_bytes(r_img.content)
-                                valid = sanitize_image_file(fpath)
-                                if valid:
+                                valid = sanitize_image_file(fpath) or fpath
+                                if valid and valid.exists() and valid.stat().st_size > 100:
                                     downloaded_images.append(valid)
                         except Exception as e:
                             logger.warning("Error downloading reddit image %s: %s", i_url, e)
@@ -2129,8 +2269,10 @@ class MediaDownloader:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Download Reddit video post audio as 192k MP3."""
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
         url = resolve_reddit_url(url)
-        clean_url = url.split("?")[0]
+        clean_url = url.split("?")[0].rstrip("/")
         vid = extract_v_reddit_id(clean_url)
 
         headers = {
@@ -2140,7 +2282,20 @@ class MediaDownloader:
             )
         }
 
-        # 1. Inspect RapidSave / RedditSave if not a direct v.redd.it URL
+        # 1. Check Jackhammer API for direct v.redd.it link
+        if not vid and requests:
+            try:
+                media_res = requests.get(
+                    "https://jackhammer.pythonanywhere.com/reddit/media/downloader",
+                    params={"url": clean_url},
+                    timeout=8,
+                )
+                if media_res.status_code == 200 and "v.redd.it" in media_res.text:
+                    vid = extract_v_reddit_id(media_res.text.strip().strip('"'))
+            except Exception:
+                pass
+
+        # 2. Inspect RapidSave / RedditSave if not a direct v.redd.it URL
         if not vid and requests:
             for save_endpoint in ("https://rapidsave.com/info?url=", "https://redditsave.com/info?url="):
                 try:
@@ -2156,7 +2311,7 @@ class MediaDownloader:
                 except Exception:
                     pass
 
-        # 2. Check vxreddit
+        # 3. Check vxreddit
         if not vid and requests:
             try:
                 clean_reddit_url = re.sub(r"/gallery/([a-zA-Z0-9]+)", r"/comments/\1", clean_url)
@@ -2170,7 +2325,7 @@ class MediaDownloader:
             except Exception:
                 pass
 
-        # 3. If vid found, extract audio from HLS playlist via yt-dlp
+        # 4. If vid found, extract audio from HLS playlist via yt-dlp
         if vid and yt_dlp:
             hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
             ydl_opts = self._get_ydl_base_opts()
@@ -2229,7 +2384,7 @@ class MediaDownloader:
             except Exception as e:
                 logger.info(f"HLS audio extraction failed: {e}")
 
-        # 4. Fallback: Download video first via _download_reddit and extract audio with ffmpeg
+        # 5. Fallback: Download video first via _download_reddit and extract audio with ffmpeg
         try:
             vid_res = self._download_reddit(clean_url, temp_dir, progress_callback)
             if vid_res and vid_res.get("type") == "video" and vid_res.get("file_path"):
@@ -2764,14 +2919,6 @@ class MediaDownloader:
                         return red_res
                 except Exception as e:
                     logger.warning(f"Reddit specialized extractor error, trying fallback: {e}")
-
-                # Secondary fallback for Reddit galleries/photos via gallery-dl
-                try:
-                    gdl_res = await asyncio.to_thread(self._download_gallery_dl, url, temp_dir)
-                    if gdl_res:
-                        return gdl_res
-                except Exception as e:
-                    logger.warning(f"Reddit gallery-dl fallback error: {e}")
 
                 raise DownloaderError(
                     "Unable to extract media from this Reddit post. Please ensure the link is public and contains downloadable video or image media."

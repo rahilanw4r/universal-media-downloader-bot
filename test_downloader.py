@@ -543,6 +543,61 @@ class TestDownloader(unittest.TestCase):
                     self.assertEqual(res["duration"], 15)
                     self.assertTrue(Path(res["file_path"]).exists())
 
+    def test_reddit_domains_and_schemes(self):
+        """Verify all Reddit domains, smart links, and schemes (http, https, www, bare) match."""
+        test_urls = [
+            "https://www.reddit.com/r/funny/comments/123/title/",
+            "http://reddit.com/r/pics/comments/456/",
+            "www.reddit.com/r/funny/comments/789/",
+            "reddit.com/r/aww/comments/abc/",
+            "https://redd.it/12345",
+            "https://v.redd.it/xyz",
+            "https://i.redd.it/pic.jpg",
+            "https://preview.redd.it/preview.png",
+            "https://reddit.app.link/smartlink",
+            "https://www.reddit.com/r/memes/s/share123",
+        ]
+        for u in test_urls:
+            self.assertTrue(is_reddit_url(u), f"Failed to match: {u}")
+        self.assertFalse(is_reddit_url("https://youtube.com/watch?v=123"))
+        self.assertFalse(is_reddit_url("https://instagram.com/p/123"))
+
+    def test_reddit_gallery_mock(self):
+        """Test gallery detection and download mock."""
+        from unittest.mock import patch, MagicMock
+        import tempfile
+        import json
+        from PIL import Image
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            img1 = temp_path / "img1.jpg"
+            img2 = temp_path / "img2.jpg"
+            with Image.new("RGB", (400, 300), color="blue") as im:
+                im.save(img1, "JPEG")
+                im.save(img2, "JPEG")
+
+            def mock_get(url, *args, **kwargs):
+                resp = MagicMock()
+                resp.status_code = 200
+                if "gallery" in url:
+                    resp.text = json.dumps(["https://preview.redd.it/a.jpg", "https://preview.redd.it/b.jpg"])
+                elif "title" in url:
+                    resp.text = "Cool 3D Gallery"
+                elif "preview.redd.it" in url or "i.redd.it" in url:
+                    resp.content = img1.read_bytes()
+                else:
+                    resp.text = "OK"
+                return resp
+
+            with patch("downloader.requests.get", side_effect=mock_get):
+                res = d._download_reddit("https://www.reddit.com/r/blender/comments/1basx0i/test/", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["type"], "album")
+                self.assertEqual(res["title"], "Cool 3D Gallery")
+                self.assertEqual(len(res["file_paths"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
