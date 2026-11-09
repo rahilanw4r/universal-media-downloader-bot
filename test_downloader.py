@@ -74,6 +74,8 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(detect_link_type("https://youtu.be/dQw4w9WgXcQ"), "video")
         self.assertEqual(detect_link_type("https://www.tiktok.com/@user/video/123"), "video")
         self.assertEqual(detect_link_type("https://v.redd.it/zv89llsvexdz"), "video")
+        self.assertEqual(detect_link_type("https://www.instagram.com/reel/C-5oIqKx0Xh/"), "video")
+        self.assertEqual(detect_link_type("https://www.reddit.com/video/zv89llsvexdz"), "video")
         # Documents
         self.assertEqual(detect_link_type("https://github.com/user/repo"), "document")
         self.assertEqual(detect_link_type("https://example.com/files/archive.zip"), "document")
@@ -400,16 +402,20 @@ class TestDownloader(unittest.TestCase):
 
         self.assertEqual(extract_reddit_video_id("https://v.redd.it/zv89llsvexdz"), "zv89llsvexdz")
         self.assertEqual(extract_reddit_video_id("https://v.redd.it/zv89llsvexdz/HLSPlaylist.m3u8"), "zv89llsvexdz")
+        self.assertEqual(extract_reddit_video_id("https://www.reddit.com/video/zv89llsvexdz"), "zv89llsvexdz")
         self.assertEqual(extract_reddit_video_id("https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/"), "6rrwyj")
         self.assertEqual(extract_reddit_video_id("https://redd.it/6rrwyj"), "6rrwyj")
 
         # extract_v_reddit_id checks
         self.assertEqual(extract_v_reddit_id("https://v.redd.it/zv89llsvexdz"), "zv89llsvexdz")
         self.assertEqual(extract_v_reddit_id("https://v.redd.it/zv89llsvexdz/HLSPlaylist.m3u8"), "zv89llsvexdz")
+        self.assertEqual(extract_v_reddit_id("https://www.reddit.com/video/zv89llsvexdz"), "zv89llsvexdz")
         self.assertIsNone(extract_v_reddit_id("https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/"))
         self.assertIsNone(extract_v_reddit_id("https://redd.it/6rrwyj"))
 
         # resolve_reddit_url checks
+        self.assertEqual(resolve_reddit_url("https://v.redd.it/zv89llsvexdz"), "https://v.redd.it/zv89llsvexdz")
+        self.assertEqual(resolve_reddit_url("https://i.redd.it/abc123xyz.jpg"), "https://i.redd.it/abc123xyz.jpg")
         self.assertEqual(resolve_reddit_url("https://www.reddit.com/r/funny/comments/12345/title/"), "https://www.reddit.com/r/funny/comments/12345/title/")
         from unittest.mock import patch, MagicMock
         with patch("requests.head") as mock_head:
@@ -758,6 +764,23 @@ class TestDownloader(unittest.TestCase):
                 res = d._download_ytdlp("https://www.reddit.com/r/videos/comments/6rrwyj/test/", temp_path)
                 self.assertIsNotNone(res)
                 self.assertEqual(res["title"], "Guarded Reddit Video")
+
+    def test_article_extractor_rejects_media_platforms(self):
+        """Verify _extract_webpage_article never extracts articles from media or social platforms."""
+        import tempfile
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            media_urls = [
+                "https://www.instagram.com/reel/C-5oIqKx0Xh/",
+                "https://v.redd.it/zv89llsvexdz",
+                "https://youtu.be/dQw4w9WgXcQ",
+                "https://www.tiktok.com/@user/video/123456789",
+                "https://twitter.com/user/status/123456789",
+                "https://pin.it/abc1234",
+            ]
+            for url in media_urls:
+                self.assertIsNone(d._extract_webpage_article(url, temp_path))
 
 
 if __name__ == "__main__":

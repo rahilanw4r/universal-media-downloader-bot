@@ -602,14 +602,19 @@ async def execute_download(
 
         if action == "media":
             link_type = detect_link_type(target_url)
-            if link_type == "image":
+            clean_url_lower = target_url.lower()
+            is_video_link = (
+                link_type == "video"
+                or any(v_kw in clean_url_lower for v_kw in ("/reel/", "/reels/", "/tv/", "/video/", "/watch", "v.redd.it", "tiktok.com", "youtu", "/shorts/"))
+            )
+            if is_video_link:
+                init_action = ChatAction.UPLOAD_VIDEO
+            elif link_type == "image":
                 init_action = ChatAction.UPLOAD_PHOTO
             elif link_type == "document":
                 init_action = ChatAction.UPLOAD_DOCUMENT
             elif link_type == "audio":
                 init_action = ChatAction.UPLOAD_VOICE
-            elif link_type == "video":
-                init_action = ChatAction.UPLOAD_VIDEO
             else:
                 init_action = ChatAction.TYPING
             await context.bot.send_chat_action(chat_id=chat_id, action=init_action)
@@ -1173,8 +1178,15 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     target_url = urls[0]
     platform = detect_platform(target_url)
     link_type = detect_link_type(target_url)
+    clean_url_lower = target_url.lower()
+    is_video_link = (
+        link_type == "video"
+        or any(v_kw in clean_url_lower for v_kw in ("/reel/", "/reels/", "/tv/", "/video/", "/watch", "v.redd.it", "tiktok.com", "youtu", "/shorts/"))
+    )
 
-    if link_type == "image":
+    if is_video_link:
+        status_text = f"🎬 <b>Fetching video from {html.escape(platform)}...</b>"
+    elif link_type == "image":
         status_text = f"⚡ <b>Fetching image from {html.escape(platform)}...</b>"
     elif link_type == "audio":
         status_text = f"⏳ <b>Extracting audio from {html.escape(platform)}...</b>"

@@ -313,7 +313,11 @@ def detect_link_type(url: str) -> str:
         return "video"
     if any(host == d or host.endswith("." + d) for d in TIKTOK_DOMAINS):
         return "video"
-    if "instagram.com" in host and any(k in clean_url for k in ("/reel/", "/reels/", "/tv/")):
+    if any(host == d or host.endswith("." + d) for d in ("instagram.com", "instagr.am")) and any(k in clean_url for k in ("/reel/", "/reels/", "/tv/")):
+        return "video"
+    if "fb.watch" in host or ("facebook.com" in host and "/videos/" in clean_url):
+        return "video"
+    if "/video/" in clean_url and any(host == d or host.endswith("." + d) for d in REDDIT_DOMAINS):
         return "video"
 
     # 4. Social media posts (video, image, or album)
@@ -426,9 +430,15 @@ def resolve_reddit_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    # Never resolve direct media endpoints (v.redd.it, i.redd.it, preview.redd.it)
+    host = _get_url_host(url)
+    if host in ("v.redd.it", "i.redd.it", "preview.redd.it") or host.endswith((".v.redd.it", ".i.redd.it", ".preview.redd.it")):
+        return url
+
     needs_resolving = (
         "/s/" in url
-        or "redd.it/" in url
+        or host == "redd.it"
+        or (host.endswith(".redd.it") and host not in ("v.redd.it", "i.redd.it", "preview.redd.it"))
         or "reddit.app.link" in url
         or "/sharing/link" in url
     )
@@ -459,10 +469,10 @@ def resolve_reddit_url(url: str) -> str:
 
 
 def extract_v_reddit_id(url_or_text: str) -> Optional[str]:
-    """Extract direct v.redd.it video ID if present."""
+    """Extract direct v.redd.it or /video/ video ID if present."""
     if not url_or_text:
         return None
-    m = re.search(r"v\.redd\.it(?:/|%2F)([a-zA-Z0-9_-]+)", url_or_text)
+    m = re.search(r"(?:v\.redd\.it|/video)(?:/|%2F)([a-zA-Z0-9_-]+)", url_or_text)
     if m:
         vid = m.group(1)
         if vid.lower() not in ("hlsplaylist", "dashplaylist", "dash_1080", "dash_720", "dash_480", "dash_audio"):
@@ -474,13 +484,13 @@ def extract_reddit_video_id(url_or_text: str) -> Optional[str]:
     """Extract Reddit video or post ID if present."""
     if not url_or_text:
         return None
-    m = re.search(r"v\.redd\.it(?:/|%2F)([a-zA-Z0-9_-]+)", url_or_text)
+    m = re.search(r"(?:v\.redd\.it|/video)(?:/|%2F)([a-zA-Z0-9_-]+)", url_or_text)
     if m:
         return m.group(1)
     m = re.search(r"/comments/([a-zA-Z0-9]+)", url_or_text)
     if m:
         return m.group(1)
-    m = re.search(r"redd\.it/([a-zA-Z0-9]+)", url_or_text)
+    m = re.search(r"(?:://|\b)redd\.it/([a-zA-Z0-9]+)", url_or_text)
     if m:
         return m.group(1)
     return None
@@ -1935,37 +1945,39 @@ class MediaDownloader:
         except Exception as e:
             logger.debug("gallery-dl instagram extraction failed for %s: %s", shortcode, e)
 
-        # Strategy 3: Official Instagram public oEmbed API
-        try:
-            oembed_url = f"https://www.instagram.com/api/v1/oembed/?url=https://www.instagram.com/p/{shortcode}/"
-            r = requests.get(oembed_url, headers=headers, timeout=12)
-            if r.status_code == 200:
-                data = r.json()
-                caption = data.get("title") or "Instagram Post"
-                author = data.get("author_name") or "Instagram"
-                thumb_url = data.get("thumbnail_url")
-                if thumb_url and "static.cdninstagram.com" not in thumb_url:
-                    fpath = temp_dir / f"ig_{shortcode}.jpg"
-                    resp = requests.get(thumb_url, headers=headers, timeout=20)
-                    if resp.status_code == 200 and resp.content:
-                        with open(fpath, "wb") as f:
-                            f.write(resp.content)
-                        valid_img = sanitize_image_file(fpath)
-                        if valid_img:
-                            mb = valid_img.stat().st_size / (1024 * 1024)
-                            return {
-                                "type": "photo",
-                                "file_path": valid_img,
-                                "file_paths": [valid_img],
-                                "dir_path": temp_dir,
-                                "title": caption,
-                                "uploader": author,
-                                "duration": 0,
-                                "thumbnail": None,
-                                "filesize_mb": mb,
-                            }
-        except Exception as e:
-            logger.debug("Instagram oEmbed API failed for %s: %s", shortcode, e)
+        # Strategy 3: Official Instagram public oEmbed API (photo posts only, not video reels)
+        is_reel_link = any(p in url.lower() for p in ("/reel/", "/reels/", "/tv/"))
+        if not is_reel_link:
+            try:
+                oembed_url = f"https://www.instagram.com/api/v1/oembed/?url=https://www.instagram.com/p/{shortcode}/"
+                r = requests.get(oembed_url, headers=headers, timeout=12)
+                if r.status_code == 200:
+                    data = r.json()
+                    caption = data.get("title") or "Instagram Post"
+                    author = data.get("author_name") or "Instagram"
+                    thumb_url = data.get("thumbnail_url")
+                    if thumb_url and "static.cdninstagram.com" not in thumb_url:
+                        fpath = temp_dir / f"ig_{shortcode}.jpg"
+                        resp = requests.get(thumb_url, headers=headers, timeout=20)
+                        if resp.status_code == 200 and resp.content:
+                            with open(fpath, "wb") as f:
+                                f.write(resp.content)
+                            valid_img = sanitize_image_file(fpath)
+                            if valid_img:
+                                mb = valid_img.stat().st_size / (1024 * 1024)
+                                return {
+                                    "type": "photo",
+                                    "file_path": valid_img,
+                                    "file_paths": [valid_img],
+                                    "dir_path": temp_dir,
+                                    "title": caption,
+                                    "uploader": author,
+                                    "duration": 0,
+                                    "thumbnail": None,
+                                    "filesize_mb": mb,
+                                }
+            except Exception as e:
+                logger.debug("Instagram oEmbed API failed for %s: %s", shortcode, e)
 
         # Strategy 4: Logged-out GraphQL Polaris query
         try:
@@ -2118,21 +2130,23 @@ class MediaDownloader:
             except Exception as e:
                 logger.warning(f"Direct Reddit image download failed: {e}")
 
-        # Step 2: Direct v.redd.it video link
-        if "v.redd.it" in host:
-            vid = extract_v_reddit_id(clean_url) or extract_reddit_video_id(clean_url)
-            if vid:
-                hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
-                try:
-                    res = self._download_ytdlp(hls_url, temp_dir, progress_callback=progress_callback)
-                    if res:
-                        res["platform"] = "Reddit"
-                        res["title"] = res.get("title") or "Reddit Video"
-                        if res["title"] == "HLSPlaylist":
-                            res["title"] = "Reddit Video"
-                        return res
-                except Exception as e:
-                    logger.info("Direct v.redd.it HLS download failed: %s", e)
+        # Step 2: Direct v.redd.it or /video/ video link
+        vid = extract_v_reddit_id(clean_url) or extract_v_reddit_id(url)
+        if not vid and ("v.redd.it" in host or "/video/" in clean_url or "/video/" in url):
+            vid = extract_reddit_video_id(clean_url) or extract_reddit_video_id(url)
+
+        if vid and ("v.redd.it" in host or "/video/" in clean_url or "/video/" in url):
+            hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
+            try:
+                res = self._download_ytdlp(hls_url, temp_dir, progress_callback=progress_callback)
+                if res:
+                    res["platform"] = "Reddit"
+                    res["title"] = res.get("title") or "Reddit Video"
+                    if res["title"] == "HLSPlaylist":
+                        res["title"] = "Reddit Video"
+                    return res
+            except Exception as e:
+                logger.info("Direct v.redd.it HLS download failed: %s", e)
 
         # Step 3: Jackhammer Media API (handles video, photo, and gallery/carousels)
         try:
@@ -2423,6 +2437,15 @@ class MediaDownloader:
                         }
         except Exception as vx_err:
             logger.debug("vxreddit extraction failed: %s", vx_err)
+
+        # Step 6: Direct yt-dlp attempt on Reddit URL
+        try:
+            res = self._download_ytdlp(clean_url, temp_dir, progress_callback=progress_callback)
+            if res:
+                res["platform"] = "Reddit"
+                return res
+        except Exception as e:
+            logger.debug("Direct yt-dlp Reddit download failed: %s", e)
 
         return None
 
@@ -2846,6 +2869,22 @@ class MediaDownloader:
         """Extract article/webpage title, summary, and lead image from OpenGraph metadata."""
         if not requests or not BeautifulSoup:
             return None
+
+        # Never extract articles from media/social platforms
+        host = _get_url_host(url)
+        if (
+            is_instagram_url(url)
+            or is_reddit_url(url)
+            or is_tiktok_url(url)
+            or is_twitter_url(url)
+            or is_pinterest_url(url)
+            or is_terabox_url(url)
+            or is_diskwala_url(url)
+            or is_github_url(url)
+            or any(host == d or host.endswith("." + d) for d in ("youtube.com", "youtu.be", "v.redd.it", "vimeo.com", "dailymotion.com"))
+        ):
+            return None
+
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -3448,6 +3487,12 @@ class MediaDownloader:
                     "Unable to extract media from this Reddit post. Please ensure the link is public and contains downloadable video or image media."
                 )
 
+            # 6.5. Direct article extraction for news and editorial articles
+            if detect_link_type(url) == "article":
+                art_res = await asyncio.to_thread(self._extract_webpage_article, url, temp_dir)
+                if art_res:
+                    return art_res
+
             # 7. Main yt-dlp download (handles YouTube, Instagram, TikTok, Reddit, Pinterest, Facebook, etc.)
             try:
                 return await asyncio.to_thread(self._download_ytdlp, url, temp_dir, resolution, progress_callback)
@@ -3475,10 +3520,11 @@ class MediaDownloader:
                 if gdl_res:
                     return gdl_res
 
-                # 7. Fallback to webpage/article extraction (OpenGraph lead photo, title & summary card)
-                art_res = await asyncio.to_thread(self._extract_webpage_article, url, temp_dir)
-                if art_res:
-                    return art_res
+                # 7. Fallback to webpage/article extraction ONLY if link is classified as article
+                if detect_link_type(url) == "article":
+                    art_res = await asyncio.to_thread(self._extract_webpage_article, url, temp_dir)
+                    if art_res:
+                        return art_res
 
                 raise DownloaderError(f"Download failed: {ytdl_err}")
 
