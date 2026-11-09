@@ -16,6 +16,7 @@ from downloader import (
     resolve_reddit_url,
     extract_v_reddit_id,
     extract_reddit_video_id,
+    is_github_url,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -597,6 +598,45 @@ class TestDownloader(unittest.TestCase):
                 self.assertEqual(res["type"], "album")
                 self.assertEqual(res["title"], "Cool 3D Gallery")
                 self.assertEqual(len(res["file_paths"]), 2)
+
+    def test_github_helpers(self):
+        self.assertTrue(is_github_url("https://github.com/rahilanw4r/snipptes.git"))
+        self.assertTrue(is_github_url("https://github.com/rahilanw4r/snipptes"))
+        self.assertTrue(is_github_url("https://raw.githubusercontent.com/user/repo/main/README.md"))
+        self.assertFalse(is_github_url("https://reddit.com/r/funny"))
+        self.assertEqual(detect_platform("https://github.com/rahilanw4r/snipptes.git"), "GitHub")
+
+    def test_github_download_mock(self):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.iter_content = lambda chunk_size: [b"PK\x03\x04dummy_zip_content" * 10]
+
+            with patch("downloader.requests.get", return_value=mock_resp):
+                res = d._download_github("https://github.com/rahilanw4r/snipptes.git", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["type"], "document")
+                self.assertEqual(res["platform"], "GitHub")
+                self.assertEqual(res["uploader"], "rahilanw4r")
+                self.assertTrue(Path(res["file_path"]).exists())
+
+    def test_reddit_safety_guard_in_ytdlp(self):
+        """Verify _download_ytdlp automatically intercepts and delegates Reddit URLs."""
+        from unittest.mock import patch
+        import tempfile
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            with patch.object(d, "_download_reddit", return_value={"type": "video", "title": "Guarded Reddit Video"}):
+                res = d._download_ytdlp("https://www.reddit.com/r/videos/comments/6rrwyj/test/", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["title"], "Guarded Reddit Video")
 
 
 if __name__ == "__main__":

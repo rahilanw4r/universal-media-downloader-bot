@@ -193,6 +193,8 @@ def detect_platform(url: str) -> str:
         return "Reddit"
     if any(host == d or host.endswith("." + d) for d in ("facebook.com", "fb.watch", "fb.com")):
         return "Facebook"
+    if any(host == d or host.endswith("." + d) for d in GITHUB_DOMAINS):
+        return "GitHub"
 
     for domain, name in PLATFORM_DOMAINS.items():
         if host == domain or host.endswith("." + domain):
@@ -242,6 +244,20 @@ def is_tiktok_url(url: str) -> bool:
     """Check if URL belongs to TikTok."""
     host = _get_url_host(url)
     return any(host == d or host.endswith("." + d) for d in TIKTOK_DOMAINS)
+
+
+GITHUB_DOMAINS = (
+    "github.com",
+    "raw.githubusercontent.com",
+)
+
+
+def is_github_url(url: str) -> bool:
+    """Check if URL belongs to GitHub."""
+    if not url:
+        return False
+    host = _get_url_host(url)
+    return any(host == d or host.endswith("." + d) for d in GITHUB_DOMAINS)
 
 
 def is_reddit_url(url: str) -> bool:
@@ -2419,6 +2435,77 @@ class MediaDownloader:
 
         return None
 
+    def _download_github(
+        self,
+        url: str,
+        temp_dir: Path,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Download GitHub repository as a ZIP archive or download direct raw/release assets."""
+        if not requests:
+            raise DownloaderError("Network library unavailable for GitHub download.")
+
+        # 1. Direct raw file download
+        if "raw.githubusercontent.com" in url or "/raw/" in url:
+            fname = Path(url.split("?")[0]).name or "file.bin"
+            target = temp_dir / fname
+            r = requests.get(url, stream=True, timeout=60)
+            if r.status_code == 200:
+                with open(target, "wb") as f:
+                    for chunk in r.iter_content(65536):
+                        f.write(chunk)
+                mb = target.stat().st_size / (1024 * 1024)
+                return {
+                    "type": "document",
+                    "file_path": target,
+                    "file_paths": [target],
+                    "dir_path": temp_dir,
+                    "title": fname,
+                    "uploader": "GitHub",
+                    "filesize_mb": mb,
+                    "platform": "GitHub",
+                }
+
+        # 2. Repository ZIP archive download
+        from urllib.parse import urlparse
+        path = urlparse(url).path.strip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            owner, repo = parts[0], parts[1]
+            zip_target = temp_dir / f"{repo}.zip"
+            # Try main branch then master branch
+            success = False
+            for branch in ("main", "master"):
+                zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip"
+                try:
+                    r = requests.get(zip_url, stream=True, timeout=60)
+                    if r.status_code == 200:
+                        with open(zip_target, "wb") as f:
+                            for chunk in r.iter_content(65536):
+                                f.write(chunk)
+                        if zip_target.exists() and zip_target.stat().st_size > 100:
+                            success = True
+                            break
+                except Exception:
+                    pass
+
+            if success:
+                mb = zip_target.stat().st_size / (1024 * 1024)
+                return {
+                    "type": "document",
+                    "file_path": zip_target,
+                    "file_paths": [zip_target],
+                    "dir_path": temp_dir,
+                    "title": f"{repo} (GitHub Repository)",
+                    "uploader": owner,
+                    "filesize_mb": mb,
+                    "platform": "GitHub",
+                }
+
+        raise DownloaderError(f"Unable to download GitHub repository from {url}. Please ensure the repository is public.")
+
     def _download_gallery_dl(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """Fallback extractor for image posts/galleries/carousels using gallery-dl."""
         try:
@@ -2617,6 +2704,13 @@ class MediaDownloader:
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Download media using yt-dlp with optional resolution tier."""
+        # Safety guard: Never invoke yt-dlp directly on reddit.com (causes Account authentication is required)
+        if is_reddit_url(url) and not ("v.redd.it" in url or "hlsplaylist" in url.lower()):
+            reddit_res = self._download_reddit(url, temp_dir, progress_callback)
+            if reddit_res:
+                return reddit_res
+            raise DownloaderError("Unable to extract media from this Reddit post. Please ensure the post is public and contains active video or photo media.")
+
         ydl_opts = self._get_ydl_base_opts()
 
         if resolution and resolution > 0:
@@ -2876,6 +2970,10 @@ class MediaDownloader:
             url = resolve_reddit_url(url)
 
         try:
+            # 0. Specialized GitHub Downloader (repositories as zip, releases, and raw assets)
+            if is_github_url(url):
+                return await asyncio.to_thread(self._download_github, url, temp_dir, progress_callback)
+
             # 1. Specialized TeraBox Downloader
             if is_terabox_url(url):
                 return await asyncio.to_thread(self._download_terabox, url, temp_dir, progress_callback)

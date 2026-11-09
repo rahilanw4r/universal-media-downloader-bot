@@ -755,7 +755,46 @@ async def execute_download(
                         for fh in open_files:
                             fh.close()
 
-                # 3. Single Video delivery
+                # 3. Document / ZIP Archive delivery (GitHub repositories, direct files, APKs, etc.)
+                elif media_type == "document":
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+                    file_path = result["file_path"]
+                    caption = (
+                        f"📦 <b>{html.escape(title[:100])}</b>\n"
+                        f"📁 {html.escape(platform)} • {filesize_mb:.1f} MB"
+                    )
+                    if bot_handle:
+                        caption += f"\n🤖 {html.escape(bot_handle)}"
+                    caption += get_promo_caption_footer()
+                    doc_keyboard = get_media_post_keyboard()
+
+                    with open(file_path, "rb") as f:
+                        try:
+                            await context.bot.send_document(
+                                chat_id=chat_id,
+                                document=f,
+                                caption=caption,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=doc_keyboard,
+                                read_timeout=600,
+                                write_timeout=600,
+                            )
+                        except Exception as e:
+                            if "parse entities" in str(e).lower():
+                                f.seek(0)
+                                await context.bot.send_document(
+                                    chat_id=chat_id,
+                                    document=f,
+                                    caption=f"📦 {title[:100]}\n📁 {platform} • {filesize_mb:.1f} MB",
+                                    reply_markup=doc_keyboard,
+                                    read_timeout=600,
+                                    write_timeout=600,
+                                )
+                            else:
+                                raise
+                    analytics.track_download(chat_id, platform, "document")
+
+                # 4. Single Video delivery
                 else:
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     file_path = result["file_path"]
@@ -895,7 +934,7 @@ async def execute_download(
             except DownloaderError as e:
                 logger.error(f"Download error: {e}")
                 raw_err = str(e)
-                if any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot", "ndus", "appicrypt", "terabox links require", "diskwala links are protected")):
+                if platform != "Reddit" and any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot", "ndus", "appicrypt", "terabox links require", "diskwala links are protected")):
                     help_note = (
                         "\n\n💡 <b>Configuration / Auth Notice:</b> This platform requires a valid session or API key. "
                         f"Admin can upload an updated <code>cookies.txt</code> using <code>/cookies</code> or configure credentials in <code>.env</code>."
