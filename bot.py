@@ -41,6 +41,7 @@ from downloader import (
     MediaDownloader,
     find_urls,
     detect_platform,
+    detect_link_type,
     render_progress_bar,
     DownloaderError,
     VIDEO_EXTS,
@@ -600,7 +601,18 @@ async def execute_download(
         tracker = ProgressTracker(status_msg, loop, platform)
 
         if action == "media":
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
+            link_type = detect_link_type(target_url)
+            if link_type == "image":
+                init_action = ChatAction.UPLOAD_PHOTO
+            elif link_type == "document":
+                init_action = ChatAction.UPLOAD_DOCUMENT
+            elif link_type == "audio":
+                init_action = ChatAction.UPLOAD_VOICE
+            elif link_type == "video":
+                init_action = ChatAction.UPLOAD_VIDEO
+            else:
+                init_action = ChatAction.TYPING
+            await context.bot.send_chat_action(chat_id=chat_id, action=init_action)
 
             try:
                 result = await downloader.download_media(
@@ -794,7 +806,72 @@ async def execute_download(
                                 raise
                     analytics.track_download(chat_id, platform, "document")
 
-                # 4. Single Video delivery
+                # 4. Article / Webpage preview card
+                elif media_type == "article":
+                    file_path = result.get("file_path")
+                    desc = result.get("description", "")
+                    source_url = result.get("source_url") or target_url
+
+                    caption = f"📰 <b>{html.escape(title[:120])}</b>"
+                    if desc:
+                        clean_desc = desc[:300] + ("..." if len(desc) > 300 else "")
+                        caption += f"\n\n<i>{html.escape(clean_desc)}</i>"
+                    caption += f"\n\n🌐 <b>Source:</b> {html.escape(platform)}"
+                    if bot_handle:
+                        caption += f"\n🤖 {html.escape(bot_handle)}"
+                    caption += get_promo_caption_footer()
+
+                    article_keyboard = None
+                    article_buttons = []
+                    if source_url and source_url.startswith("http"):
+                        article_buttons.append([InlineKeyboardButton("📖 Read Full Article", url=source_url)])
+                    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
+                        article_buttons.append([
+                            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
+                            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
+                        ])
+                    if article_buttons:
+                        article_keyboard = InlineKeyboardMarkup(article_buttons)
+
+                    if file_path and Path(file_path).exists():
+                        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                        with open(file_path, "rb") as f:
+                            try:
+                                await context.bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo=f,
+                                    caption=caption,
+                                    parse_mode=ParseMode.HTML,
+                                    reply_markup=article_keyboard,
+                                    read_timeout=120,
+                                    write_timeout=120,
+                                )
+                            except Exception as e:
+                                if "parse entities" in str(e).lower():
+                                    f.seek(0)
+                                    plain_caption = f"📰 {title[:120]}\n\n{desc[:300]}\n\n🌐 Source: {platform}"
+                                    await context.bot.send_photo(
+                                        chat_id=chat_id,
+                                        photo=f,
+                                        caption=plain_caption,
+                                        reply_markup=article_keyboard,
+                                        read_timeout=120,
+                                        write_timeout=120,
+                                    )
+                                else:
+                                    raise
+                    else:
+                        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=caption,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=article_keyboard,
+                            disable_web_page_preview=False,
+                        )
+                    analytics.track_download(chat_id, platform, "article")
+
+                # 5. Single Video delivery
                 else:
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VIDEO)
                     file_path = result["file_path"]
@@ -1095,9 +1172,21 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     target_url = urls[0]
     platform = detect_platform(target_url)
+    link_type = detect_link_type(target_url)
+
+    if link_type == "image":
+        status_text = f"⚡ <b>Fetching image from {html.escape(platform)}...</b>"
+    elif link_type == "audio":
+        status_text = f"⏳ <b>Extracting audio from {html.escape(platform)}...</b>"
+    elif link_type == "document":
+        status_text = f"📦 <b>Downloading file from {html.escape(platform)}...</b>"
+    elif link_type == "article":
+        status_text = f"📰 <b>Reading article from {html.escape(platform)}...</b>"
+    else:
+        status_text = f"⚡ <b>Connecting to {html.escape(platform)}...</b>"
 
     status_msg = await message.reply_text(
-        f"⚡ <b>Connecting to {html.escape(platform)}...</b>",
+        status_text,
         parse_mode=ParseMode.HTML,
     )
     await execute_download(

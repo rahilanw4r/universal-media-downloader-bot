@@ -143,6 +143,56 @@ REDDIT_DOMAINS = (
 
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".flv"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac", ".opus", ".wma"}
+DOCUMENT_EXTS = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".pdf", ".apk", ".ipa", ".exe", ".dmg", ".doc", ".docx"}
+
+NEWS_DOMAINS = {
+    "bbc.com": "BBC News",
+    "bbc.co.uk": "BBC News",
+    "cnn.com": "CNN",
+    "edition.cnn.com": "CNN",
+    "nytimes.com": "The New York Times",
+    "theguardian.com": "The Guardian",
+    "reuters.com": "Reuters",
+    "bloomberg.com": "Bloomberg",
+    "forbes.com": "Forbes",
+    "techcrunch.com": "TechCrunch",
+    "theverge.com": "The Verge",
+    "wired.com": "Wired",
+    "arstechnica.com": "Ars Technica",
+    "engadget.com": "Engadget",
+    "medium.com": "Medium",
+    "substack.com": "Substack",
+    "wikipedia.org": "Wikipedia",
+    "washingtonpost.com": "The Washington Post",
+    "wsj.com": "The Wall Street Journal",
+    "aljazeera.com": "Al Jazeera",
+    "huffpost.com": "HuffPost",
+    "vox.com": "Vox",
+    "businessinsider.com": "Business Insider",
+    "apnews.com": "Associated Press",
+    "cnbc.com": "CNBC",
+    "time.com": "Time",
+    "nationalgeographic.com": "National Geographic",
+    "theatlantic.com": "The Atlantic",
+    "economist.com": "The Economist",
+    "indiatimes.com": "Times of India",
+    "hindustantimes.com": "Hindustan Times",
+    "ndtv.com": "NDTV",
+    "dawn.com": "DAWN",
+}
+
+IMAGE_HOST_DOMAINS = {
+    "imgur.com": "Imgur",
+    "i.imgur.com": "Imgur",
+    "unsplash.com": "Unsplash",
+    "images.unsplash.com": "Unsplash",
+    "pexels.com": "Pexels",
+    "flickr.com": "Flickr",
+    "postimg.cc": "PostImage",
+    "ibb.co": "ImgBB",
+    "i.ibb.co": "ImgBB",
+}
 
 
 def find_urls(text: str) -> List[str]:
@@ -169,7 +219,7 @@ def _get_url_host(url: str) -> str:
 
 
 def detect_platform(url: str) -> str:
-    """Detect platform name from URL using strict host-level matching."""
+    """Detect platform or brand name from URL using strict host-level matching."""
     host = _get_url_host(url)
     if not host:
         return "Web Video"
@@ -200,7 +250,105 @@ def detect_platform(url: str) -> str:
         if host == domain or host.endswith("." + domain):
             return name
 
+    # News & Editorial outlets
+    for domain, name in NEWS_DOMAINS.items():
+        if host == domain or host.endswith("." + domain):
+            return name
+
+    # Image hosting domains
+    for domain, name in IMAGE_HOST_DOMAINS.items():
+        if host == domain or host.endswith("." + domain):
+            return name
+
+    clean_u = url.split("?")[0].lower()
+    ext = Path(clean_u).suffix.lower()
+    if ext in VIDEO_EXTS:
+        return "Web Video"
+    if ext in IMAGE_EXTS:
+        return "Image File"
+    if ext in AUDIO_EXTS:
+        return "Audio File"
+    if ext in DOCUMENT_EXTS:
+        return "Document File"
+
+    # Fallback to cleanly formatted domain brand name
+    parts = host.split(".")
+    if len(parts) >= 2:
+        sub = parts[-2]
+        if sub in ("co", "com", "org", "net", "gov", "edu") and len(parts) >= 3:
+            sub = parts[-3]
+        return sub.capitalize()
+
     return "Web Video"
+
+
+def detect_link_type(url: str) -> str:
+    """
+    Classify the given URL into a semantic category:
+    'image', 'video', 'audio', 'document', 'article', 'social', 'cloud', or 'webpage'.
+    """
+    if not url:
+        return "webpage"
+
+    clean_url = url.split("?")[0].lower()
+    host = _get_url_host(url)
+
+    # 1. Direct file extensions
+    ext = Path(clean_url).suffix.lower()
+    if ext in IMAGE_EXTS:
+        return "image"
+    if ext in AUDIO_EXTS:
+        return "audio"
+    if ext in DOCUMENT_EXTS:
+        return "document"
+    if ext in VIDEO_EXTS or ext in (".m3u8", ".mpd"):
+        return "video"
+
+    # 2. Known image hosting or direct photo platforms
+    if any(host == d or host.endswith("." + d) for d in ("i.redd.it", "preview.redd.it", "i.imgur.com", "images.unsplash.com", "ibb.co", "i.ibb.co")):
+        return "image"
+
+    # 3. Dedicated video platforms
+    if any(host == d or host.endswith("." + d) for d in ("youtube.com", "youtu.be", "v.redd.it", "vimeo.com", "dailymotion.com", "twitch.tv", "rumble.com", "bilibili.com")):
+        return "video"
+    if any(host == d or host.endswith("." + d) for d in TIKTOK_DOMAINS):
+        return "video"
+    if "instagram.com" in host and any(k in clean_url for k in ("/reel/", "/reels/", "/tv/")):
+        return "video"
+
+    # 4. Social media posts (video, image, or album)
+    if any(host == d or host.endswith("." + d) for d in TWITTER_DOMAINS):
+        return "social"
+    if any(host == d or host.endswith("." + d) for d in ("instagram.com", "instagr.am")):
+        return "social"
+    if any(host == d or host.endswith("." + d) for d in REDDIT_DOMAINS):
+        return "social"
+    if any(host == d or host.endswith("." + d) for d in ("facebook.com", "fb.watch", "fb.com")):
+        return "social"
+    if is_pinterest_url(url):
+        return "social"
+
+    # 5. Cloud storage
+    if any(host == d or host.endswith("." + d) for d in TERABOX_DOMAINS) or any(host == d or host.endswith("." + d) for d in DISKWALA_DOMAINS):
+        return "cloud"
+
+    # 6. Repositories and developer archives
+    if any(host == d or host.endswith("." + d) for d in GITHUB_DOMAINS) or "gitlab.com" in host:
+        return "document"
+
+    # 7. Dedicated audio streaming
+    if any(host == d or host.endswith("." + d) for d in ("soundcloud.com", "bandcamp.com", "mixcloud.com")):
+        return "audio"
+
+    # 8. Known news and editorial article domains
+    if any(host == d or host.endswith("." + d) for d in NEWS_DOMAINS):
+        return "article"
+
+    # 9. Path-based article heuristics
+    if any(marker in clean_url for marker in ("/news/", "/article/", "/articles/", "/story/", "/blog/", "/posts/", "/entry/")):
+        return "article"
+
+    return "webpage"
 
 
 def is_pinterest_url(url: str) -> bool:
@@ -2654,6 +2802,118 @@ class MediaDownloader:
 
         raise DownloaderError(f"Unable to download GitHub repository from {url}. Please ensure the repository is public.")
 
+    def _download_direct_image(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
+        """Download a direct image file (.jpg, .png, .webp, etc.)."""
+        if not requests:
+            return None
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+        }
+        try:
+            clean_url = url.split("?")[0]
+            ext = Path(clean_url).suffix.lower()
+            if ext not in IMAGE_EXTS:
+                ext = ".jpg"
+            fpath = temp_dir / f"image_{uuid.uuid4().hex[:8]}{ext}"
+            r = requests.get(url, headers=headers, stream=True, timeout=25)
+            if r.status_code == 200:
+                with open(fpath, "wb") as f:
+                    for chunk in r.iter_content(65536):
+                        f.write(chunk)
+                valid = sanitize_image_file(fpath) or fpath
+                if valid.exists() and valid.stat().st_size > 100:
+                    mb = valid.stat().st_size / (1024 * 1024)
+                    fname = Path(clean_url).stem.replace("-", " ").replace("_", " ") or "Image"
+                    return {
+                        "type": "photo",
+                        "file_path": valid,
+                        "file_paths": [valid],
+                        "dir_path": temp_dir,
+                        "title": fname.title()[:100],
+                        "uploader": detect_platform(url),
+                        "duration": 0,
+                        "thumbnail": url,
+                        "filesize_mb": mb,
+                    }
+        except Exception as e:
+            logger.debug("Direct image download failed: %s", e)
+        return None
+
+    def _extract_webpage_article(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
+        """Extract article/webpage title, summary, and lead image from OpenGraph metadata."""
+        if not requests or not BeautifulSoup:
+            return None
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+        }
+        try:
+            r = requests.get(url, headers=headers, timeout=12)
+            if r.status_code == 200 and r.text:
+                soup = BeautifulSoup(r.text, "html.parser")
+                t_el = (
+                    soup.find("meta", property="og:title")
+                    or soup.find("meta", property="twitter:title")
+                    or soup.find("title")
+                )
+                title = ""
+                if t_el:
+                    title = (t_el.get("content") or t_el.text or "").strip()
+                if not title:
+                    title = detect_platform(url) + " Article"
+
+                d_el = (
+                    soup.find("meta", property="og:description")
+                    or soup.find("meta", property="twitter:description")
+                    or soup.find("meta", attrs={"name": "description"})
+                )
+                desc = (d_el.get("content") or "").strip() if d_el else ""
+
+                site_el = soup.find("meta", property="og:site_name")
+                site_name = (site_el.get("content") or "").strip() if site_el else detect_platform(url)
+
+                im_el = soup.find("meta", property="og:image") or soup.find("meta", property="twitter:image")
+                img_url = (im_el.get("content") or "").strip() if im_el else None
+
+                downloaded_image: Optional[Path] = None
+                if img_url and img_url.startswith("http"):
+                    try:
+                        ext = Path(img_url.split("?")[0]).suffix.lower()
+                        if ext not in IMAGE_EXTS:
+                            ext = ".jpg"
+                        img_path = temp_dir / f"article_{uuid.uuid4().hex[:8]}{ext}"
+                        r_img = requests.get(img_url, headers=headers, timeout=15)
+                        if r_img.status_code == 200 and len(r_img.content) > 1000:
+                            img_path.write_bytes(r_img.content)
+                            clean_img = sanitize_image_file(img_path) or img_path
+                            if clean_img.exists() and clean_img.stat().st_size > 1000:
+                                downloaded_image = clean_img
+                    except Exception as e:
+                        logger.debug("Article image fetch error: %s", e)
+
+                mb = (downloaded_image.stat().st_size / (1024 * 1024)) if downloaded_image else 0
+                return {
+                    "type": "article",
+                    "file_path": downloaded_image,
+                    "file_paths": [downloaded_image] if downloaded_image else [],
+                    "dir_path": temp_dir,
+                    "title": title[:120],
+                    "description": desc,
+                    "source_url": url,
+                    "uploader": site_name or detect_platform(url),
+                    "duration": 0,
+                    "thumbnail": img_url,
+                    "filesize_mb": mb,
+                }
+        except Exception as e:
+            logger.debug("Article metadata extraction failed: %s", e)
+        return None
+
     def _download_gallery_dl(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """Fallback extractor for image posts/galleries/carousels using gallery-dl."""
         try:
@@ -3003,6 +3263,8 @@ class MediaDownloader:
 
         video_files = [f for f in files if f.suffix.lower() in VIDEO_EXTS]
         image_files = [f for f in files if f.suffix.lower() in IMAGE_EXTS]
+        audio_files = [f for f in files if f.suffix.lower() in AUDIO_EXTS]
+        doc_files = [f for f in files if f.suffix.lower() in DOCUMENT_EXTS]
 
         if video_files:
             target_file = video_files[0]
@@ -3015,6 +3277,14 @@ class MediaDownloader:
         elif len(image_files) == 1:
             media_type = "photo"
             target_file = image_files[0]
+            out_files = [target_file]
+        elif audio_files:
+            target_file = audio_files[0]
+            media_type = "audio"
+            out_files = [target_file]
+        elif doc_files:
+            target_file = doc_files[0]
+            media_type = "document"
             out_files = [target_file]
         else:
             target_file = files[0]
@@ -3118,6 +3388,14 @@ class MediaDownloader:
             url = resolve_reddit_url(url)
 
         try:
+            # Direct image links (.jpg, .png, .webp, i.redd.it, imgur, etc.)
+            clean_u = url.split("?")[0].lower()
+            host = _get_url_host(url)
+            if any(clean_u.endswith(ext) for ext in IMAGE_EXTS) or any(host == h or host.endswith("." + h) for h in ("i.redd.it", "preview.redd.it", "i.imgur.com", "i.ibb.co")):
+                img_res = await asyncio.to_thread(self._download_direct_image, url, temp_dir)
+                if img_res:
+                    return img_res
+
             # 0. Specialized GitHub Downloader (repositories as zip, releases, and raw assets)
             if is_github_url(url):
                 return await asyncio.to_thread(self._download_github, url, temp_dir, progress_callback)
@@ -3196,6 +3474,11 @@ class MediaDownloader:
                 gdl_res = await asyncio.to_thread(self._download_gallery_dl, url, temp_dir)
                 if gdl_res:
                     return gdl_res
+
+                # 7. Fallback to webpage/article extraction (OpenGraph lead photo, title & summary card)
+                art_res = await asyncio.to_thread(self._extract_webpage_article, url, temp_dir)
+                if art_res:
+                    return art_res
 
                 raise DownloaderError(f"Download failed: {ytdl_err}")
 

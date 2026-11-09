@@ -3,6 +3,7 @@ from pathlib import Path
 from downloader import (
     find_urls,
     detect_platform,
+    detect_link_type,
     is_pinterest_url,
     resolve_pinterest_url,
     is_twitter_url,
@@ -59,6 +60,35 @@ class TestDownloader(unittest.TestCase):
         self.assertEqual(detect_platform("https://pin.it/abc123"), "Pinterest")
         self.assertEqual(detect_platform("https://www.reddit.com/r/videos/comments/123/"), "Reddit")
         self.assertEqual(detect_platform("https://example.com/video.mp4"), "Web Video")
+        self.assertEqual(detect_platform("https://www.bbc.com/news/world-12345"), "BBC News")
+        self.assertEqual(detect_platform("https://techcrunch.com/2024/01/01/startup/"), "TechCrunch")
+        self.assertEqual(detect_platform("https://example.com/photo.jpg"), "Image File")
+
+    def test_detect_link_type(self):
+        # Images
+        self.assertEqual(detect_link_type("https://example.com/photo.jpg"), "image")
+        self.assertEqual(detect_link_type("https://i.redd.it/abc.png?width=100"), "image")
+        self.assertEqual(detect_link_type("https://i.imgur.com/xyz.webp"), "image")
+        # Videos
+        self.assertEqual(detect_link_type("https://example.com/movie.mp4"), "video")
+        self.assertEqual(detect_link_type("https://youtu.be/dQw4w9WgXcQ"), "video")
+        self.assertEqual(detect_link_type("https://www.tiktok.com/@user/video/123"), "video")
+        self.assertEqual(detect_link_type("https://v.redd.it/zv89llsvexdz"), "video")
+        # Documents
+        self.assertEqual(detect_link_type("https://github.com/user/repo"), "document")
+        self.assertEqual(detect_link_type("https://example.com/files/archive.zip"), "document")
+        self.assertEqual(detect_link_type("https://example.com/manual.pdf"), "document")
+        # Audio
+        self.assertEqual(detect_link_type("https://example.com/song.mp3"), "audio")
+        self.assertEqual(detect_link_type("https://soundcloud.com/artist/track"), "audio")
+        # Articles & News
+        self.assertEqual(detect_link_type("https://www.bbc.com/news/technology-123"), "article")
+        self.assertEqual(detect_link_type("https://techcrunch.com/article/ai-breakthrough/"), "article")
+        self.assertEqual(detect_link_type("https://medium.com/@author/my-story"), "article")
+        # Social
+        self.assertEqual(detect_link_type("https://instagram.com/p/abc123/"), "social")
+        self.assertEqual(detect_link_type("https://twitter.com/user/status/123"), "social")
+        self.assertEqual(detect_link_type("https://www.reddit.com/r/funny/comments/123/title/"), "social")
 
     def test_platform_helpers(self):
         self.assertTrue(is_pinterest_url("https://www.pinterest.com/pin/123456/"))
@@ -571,6 +601,69 @@ class TestDownloader(unittest.TestCase):
                         with self.assertRaises(DownloaderError) as cm:
                             d._download_reddit_audio("https://www.reddit.com/r/videos/comments/6rrwyj/silent/", temp_path)
                         self.assertIn("silent video", str(cm.exception).lower())
+
+    def test_extract_webpage_article_mock(self):
+        """Verify news article OpenGraph metadata extraction."""
+        from unittest.mock import patch, MagicMock
+        from PIL import Image
+        import io
+        import tempfile
+
+        buf = io.BytesIO()
+        Image.new("RGB", (100, 100), color="red").save(buf, format="JPEG")
+        fake_img_bytes = buf.getvalue()
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            mock_html = """
+            <html>
+                <head>
+                    <meta property="og:title" content="Breaking News: Major Discovery">
+                    <meta property="og:description" content="Scientists announced a historic breakthrough today.">
+                    <meta property="og:site_name" content="Tech Daily">
+                    <meta property="og:image" content="https://techdaily.com/lead.jpg">
+                </head>
+                <body><p>Article content</p></body>
+            </html>
+            """
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.text = mock_html
+            mock_resp.content = fake_img_bytes
+
+            with patch("downloader.requests.get", return_value=mock_resp):
+                res = d._extract_webpage_article("https://techdaily.com/article/123", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["type"], "article")
+                self.assertEqual(res["title"], "Breaking News: Major Discovery")
+                self.assertEqual(res["description"], "Scientists announced a historic breakthrough today.")
+                self.assertEqual(res["uploader"], "Tech Daily")
+
+    def test_download_direct_image_mock(self):
+        """Verify direct image (.jpg/.png) download bypasses yt-dlp."""
+        from unittest.mock import patch, MagicMock
+        from PIL import Image
+        import io
+        import tempfile
+
+        buf = io.BytesIO()
+        Image.new("RGB", (100, 100), color="blue").save(buf, format="JPEG")
+        fake_img_bytes = buf.getvalue()
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.content = fake_img_bytes
+            mock_resp.iter_content = MagicMock(return_value=[fake_img_bytes])
+
+            with patch("downloader.requests.get", return_value=mock_resp):
+                res = d._download_direct_image("https://example.com/nature.jpg", temp_path)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["type"], "photo")
+                self.assertTrue(Path(res["file_path"]).exists())
 
     def test_reddit_domains_and_schemes(self):
         """Verify all Reddit domains, smart links, and schemes (http, https, www, bare) match."""

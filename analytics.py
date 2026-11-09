@@ -354,6 +354,19 @@ def format_admin_dashboard() -> str:
     vid_c = mt.get("video", 0)
     aud_c = mt.get("audio", 0)
     pho_c = mt.get("photo", 0) + mt.get("album", 0)
+    doc_c = mt.get("document", 0)
+    art_c = mt.get("article", 0)
+
+    format_lines = [
+        f"• 🎬 <b>Videos:</b> {vid_c:,}",
+        f"• 🎵 <b>MP3 Audio:</b> {aud_c:,}",
+        f"• 📸 <b>Photos / Carousels:</b> {pho_c:,}",
+    ]
+    if doc_c > 0:
+        format_lines.append(f"• 📦 <b>Documents / Files:</b> {doc_c:,}")
+    if art_c > 0:
+        format_lines.append(f"• 📰 <b>Articles:</b> {art_c:,}")
+    formats_text = "\n".join(format_lines)
 
     recent_lines = []
     for idx, u in enumerate(summary["recent_users"], 1):
@@ -374,9 +387,7 @@ def format_admin_dashboard() -> str:
         "🌐 <b>Downloads by Platform:</b>\n"
         f"{plat_text}\n\n"
         "📦 <b>Media Formats:</b>\n"
-        f"• 🎬 <b>Videos:</b> {vid_c:,}\n"
-        f"• 🎵 <b>MP3 Audio:</b> {aud_c:,}\n"
-        f"• 📸 <b>Photos / Carousels:</b> {pho_c:,}\n\n"
+        f"{formats_text}\n\n"
         "🕒 <b>Recent Users:</b>\n"
         f"{recent_text}\n\n"
         "💡 <i>Tip: Send <code>/broadcast &lt;message&gt;</code> to send an announcement to all users.</i>"
