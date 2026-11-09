@@ -2278,18 +2278,34 @@ class MediaDownloader:
 
         return None
 
+    def _get_file_duration(self, file_path: Path) -> int:
+        """Extract media duration in seconds using ffmpeg."""
+        try:
+            cmd = [FFMPEG_EXE, "-i", str(file_path)]
+            p = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=8)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", p.stderr)
+            if m:
+                h, mn, s = m.groups()
+                return int(int(h) * 3600 + int(mn) * 60 + float(s))
+        except Exception:
+            pass
+        return 0
+
     def _download_reddit_audio(
         self,
         url: str,
         temp_dir: Path,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Download Reddit video post audio as 192k MP3."""
+        """Download Reddit video post audio as 192k MP3 with accurate title & metadata."""
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         url = resolve_reddit_url(url)
         clean_url = url.split("?")[0].rstrip("/")
-        vid = extract_v_reddit_id(clean_url)
+        vid = extract_v_reddit_id(clean_url) or extract_v_reddit_id(url)
+        post_title: Optional[str] = None
+        discovered_audio_url: Optional[str] = None
+        is_confirmed_silent = False
 
         headers = {
             "User-Agent": (
@@ -2298,50 +2314,155 @@ class MediaDownloader:
             )
         }
 
-        # 1. Check Jackhammer API for direct v.redd.it link
-        if not vid and requests:
+        # 1. Check Jackhammer API for direct v.redd.it link & title
+        if requests:
             try:
-                media_res = requests.get(
-                    "https://jackhammer.pythonanywhere.com/reddit/media/downloader",
+                t_res = requests.get(
+                    "https://jackhammer.pythonanywhere.com/reddit/media/title",
                     params={"url": clean_url},
-                    timeout=8,
+                    timeout=5,
                 )
-                if media_res.status_code == 200 and "v.redd.it" in media_res.text:
-                    vid = extract_v_reddit_id(media_res.text.strip().strip('"'))
+                if t_res.status_code == 200 and t_res.text.strip() and not t_res.text.strip().startswith("<"):
+                    post_title = t_res.text.strip()
             except Exception:
                 pass
 
-        # 2. Inspect RapidSave / RedditSave if not a direct v.redd.it URL
-        if not vid and requests:
+            if not vid:
+                try:
+                    media_res = requests.get(
+                        "https://jackhammer.pythonanywhere.com/reddit/media/downloader",
+                        params={"url": clean_url},
+                        timeout=7,
+                    )
+                    if media_res.status_code == 200 and media_res.text and "v.redd.it" in media_res.text:
+                        vid = extract_v_reddit_id(media_res.text.strip().strip('"'))
+                except Exception:
+                    pass
+
+        # 2. Inspect RapidSave / RedditSave
+        if requests and (not vid or not discovered_audio_url or not post_title):
             for save_endpoint in ("https://rapidsave.com/info?url=", "https://redditsave.com/info?url="):
                 try:
                     rs_url = f"{save_endpoint}{quote(clean_url, safe='')}"
                     resp = requests.get(rs_url, headers=headers, timeout=10)
                     if resp.status_code == 200 and BeautifulSoup:
                         soup = BeautifulSoup(resp.text, "html.parser")
-                        dl_btn = soup.find("a", class_="downloadbutton")
-                        if dl_btn and dl_btn.get("href"):
-                            vid = extract_v_reddit_id(dl_btn["href"])
-                            if vid:
-                                break
+                        if not post_title:
+                            post_title_el = soup.find("h2", class_="text-truncate") or soup.find("h2") or soup.find("h1")
+                            if post_title_el and post_title_el.text.strip():
+                                post_title = post_title_el.text.strip()
+
+                        dl_btns = soup.find_all("a", class_="downloadbutton") or soup.find_all("a")
+                        for btn in dl_btns:
+                            href = btn.get("href", "")
+                            if not href:
+                                continue
+                            if "audio_url=false" in href:
+                                is_confirmed_silent = True
+                            m_aud = re.search(r"audio_url=(https?%3A%2F%2F[^\s&\"']+)", href)
+                            if m_aud:
+                                from urllib.parse import unquote
+                                discovered_audio_url = unquote(m_aud.group(1))
+                            elif re.search(r"audio_url=(https?://[^\s&\"']+)", href):
+                                discovered_audio_url = re.search(r"audio_url=(https?://[^\s&\"']+)", href).group(1)
+
+                            if not vid:
+                                vid = extract_v_reddit_id(href)
+                        if vid or discovered_audio_url:
+                            break
                 except Exception:
                     pass
 
-        # 3. Check vxreddit
-        if not vid and requests:
+        # 3. Check vxreddit for metadata, video ID and audio URL
+        if requests and (not vid or not discovered_audio_url or not post_title):
             try:
                 clean_reddit_url = re.sub(r"/gallery/([a-zA-Z0-9]+)", r"/comments/\1", clean_url)
                 vx_url = re.sub(r"https?://(?:www\.|old\.)?reddit\.com", "https://vxreddit.com", clean_reddit_url)
+                if "vxreddit.com" not in vx_url:
+                    m_rid = re.search(r"redd\.it/([a-zA-Z0-9]+)", clean_url)
+                    if m_rid:
+                        vx_url = f"https://vxreddit.com/comments/{m_rid.group(1)}"
+
                 resp = requests.get(vx_url, headers={"User-Agent": "TelegramBot"}, timeout=10)
                 if resp.status_code == 200 and BeautifulSoup:
                     soup = BeautifulSoup(resp.text, "html.parser")
+                    if not post_title:
+                        title_meta = soup.find("meta", property="og:title")
+                        if title_meta and title_meta.get("content"):
+                            cand_t = title_meta["content"].strip()
+                            if cand_t and cand_t != "vxReddit":
+                                post_title = cand_t
+
                     vid_meta = soup.find("meta", property="og:video") or soup.find("meta", property="twitter:player:stream")
                     if vid_meta and vid_meta.get("content"):
-                        vid = extract_v_reddit_id(vid_meta["content"])
+                        v_content = vid_meta["content"]
+                        if not vid:
+                            vid = extract_v_reddit_id(v_content)
+                        m_vx_aud = re.search(r"audio_url=(https?%3A%2F%2F[^\s&\"']+)", v_content)
+                        if m_vx_aud:
+                            from urllib.parse import unquote
+                            discovered_audio_url = unquote(m_vx_aud.group(1))
+                        elif re.search(r"audio_url=(https?://[^\s&\"']+)", v_content):
+                            discovered_audio_url = re.search(r"audio_url=(https?://[^\s&\"']+)", v_content).group(1)
             except Exception:
                 pass
 
-        # 4. If vid found, extract audio from HLS playlist via yt-dlp
+        final_title = post_title or "Reddit Audio"
+
+        # 4. Direct Audio Stream Extraction (instantaneous, high fidelity)
+        audio_candidates = []
+        if discovered_audio_url:
+            audio_candidates.append(discovered_audio_url)
+        if vid:
+            audio_candidates.extend([
+                f"https://v.redd.it/{vid}/audio",
+                f"https://v.redd.it/{vid}/DASH_audio.mp4",
+                f"https://v.redd.it/{vid}/DASH_AUDIO_128.mp4",
+                f"https://v.redd.it/{vid}/DASH_audio_128.mp4",
+                f"https://v.redd.it/{vid}/DASH_AUDIO_64.mp4",
+            ])
+
+        if requests and audio_candidates:
+            for cand_url in audio_candidates:
+                try:
+                    r_head = requests.head(cand_url, headers=headers, timeout=5, allow_redirects=True)
+                    if r_head.status_code == 200:
+                        raw_ext = ".mp4" if "mp4" in cand_url else ".aac"
+                        raw_temp = temp_dir / f"reddit_raw_audio_{uuid.uuid4().hex[:8]}{raw_ext}"
+                        r_stream = requests.get(cand_url, headers=headers, stream=True, timeout=30)
+                        if r_stream.status_code == 200:
+                            with open(raw_temp, "wb") as f:
+                                for chunk in r_stream.iter_content(65536):
+                                    f.write(chunk)
+                            if raw_temp.exists() and raw_temp.stat().st_size > 1000:
+                                out_mp3 = temp_dir / f"reddit_audio_{uuid.uuid4().hex[:8]}.mp3"
+                                cmd = [
+                                    FFMPEG_EXE, "-y", "-i", str(raw_temp),
+                                    "-vn", "-acodec", "libmp3lame", "-ab", "192k",
+                                    "-metadata", f"title={final_title}",
+                                    "-metadata", "artist=Reddit",
+                                    str(out_mp3)
+                                ]
+                                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                                raw_temp.unlink(missing_ok=True)
+                                if out_mp3.exists() and out_mp3.stat().st_size > 1000:
+                                    mb = out_mp3.stat().st_size / (1024 * 1024)
+                                    dur = self._get_file_duration(out_mp3)
+                                    return {
+                                        "type": "audio",
+                                        "file_path": out_mp3,
+                                        "file_paths": [out_mp3],
+                                        "dir_path": temp_dir,
+                                        "title": final_title,
+                                        "uploader": "Reddit",
+                                        "duration": dur,
+                                        "thumbnail": None,
+                                        "filesize_mb": mb,
+                                    }
+                except Exception as stream_err:
+                    logger.debug("Direct audio stream candidate %s failed: %s", cand_url, stream_err)
+
+        # 5. HLS Playlist extraction via yt-dlp
         if vid and yt_dlp:
             hls_url = f"https://v.redd.it/{vid}/HLSPlaylist.m3u8"
             ydl_opts = self._get_ydl_base_opts()
@@ -2386,52 +2507,79 @@ class MediaDownloader:
                     if mp3_files:
                         fpath = mp3_files[0]
                         mb = fpath.stat().st_size / (1024 * 1024)
+                        dur = int(info.get("duration") or 0)
+                        if dur <= 0:
+                            dur = self._get_file_duration(fpath)
                         return {
                             "type": "audio",
                             "file_path": fpath,
                             "file_paths": [fpath],
                             "dir_path": temp_dir,
-                            "title": "Reddit Audio",
+                            "title": final_title,
                             "uploader": "Reddit",
-                            "duration": int(info.get("duration") or 0),
+                            "duration": dur,
                             "thumbnail": None,
                             "filesize_mb": mb,
                         }
             except Exception as e:
                 logger.info(f"HLS audio extraction failed: {e}")
 
-        # 5. Fallback: Download video first via _download_reddit and extract audio with ffmpeg
+        # 6. Fallback: Download video first via _download_reddit and extract audio with ffmpeg
         try:
             vid_res = self._download_reddit(clean_url, temp_dir, progress_callback)
             if vid_res and vid_res.get("type") == "video" and vid_res.get("file_path"):
                 v_path = Path(vid_res["file_path"])
                 if v_path.exists():
+                    # Probe if video actually contains an audio stream
+                    has_audio = False
+                    try:
+                        p_probe = subprocess.run(
+                            [FFMPEG_EXE, "-i", str(v_path)],
+                            stderr=subprocess.PIPE,
+                            stdout=subprocess.DEVNULL,
+                            text=True,
+                            timeout=8,
+                        )
+                        if "Audio:" in p_probe.stderr:
+                            has_audio = True
+                    except Exception:
+                        has_audio = True
+
+                    if not has_audio:
+                        v_path.unlink(missing_ok=True)
+                        raise DownloaderError("This Reddit video does not contain an audio track (silent video/GIF).")
+
                     out_mp3 = temp_dir / f"reddit_audio_{uuid.uuid4().hex[:8]}.mp3"
                     cmd = [
                         FFMPEG_EXE, "-y", "-i", str(v_path),
                         "-vn", "-acodec", "libmp3lame", "-ab", "192k",
+                        "-metadata", f"title={vid_res.get('title') or final_title}",
+                        "-metadata", "artist=Reddit",
                         str(out_mp3)
                     ]
                     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                    try:
-                        v_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                    v_path.unlink(missing_ok=True)
                     if out_mp3.exists() and out_mp3.stat().st_size > 1000:
                         mb = out_mp3.stat().st_size / (1024 * 1024)
+                        dur = vid_res.get("duration") or self._get_file_duration(out_mp3)
                         return {
                             "type": "audio",
                             "file_path": out_mp3,
                             "file_paths": [out_mp3],
                             "dir_path": temp_dir,
-                            "title": vid_res.get("title") or "Reddit Audio",
+                            "title": vid_res.get("title") or final_title,
                             "uploader": "Reddit",
-                            "duration": vid_res.get("duration") or 0,
+                            "duration": dur,
                             "thumbnail": None,
                             "filesize_mb": mb,
                         }
+        except DownloaderError:
+            raise
         except Exception as e:
             logger.warning(f"Reddit fallback video-to-audio extraction failed: {e}")
+
+        if is_confirmed_silent:
+            raise DownloaderError("This Reddit video does not contain an audio track (silent video/GIF).")
 
         return None
 
@@ -3086,6 +3234,8 @@ class MediaDownloader:
                 red_audio = await asyncio.to_thread(self._download_reddit_audio, url, temp_dir, progress_callback)
                 if red_audio:
                     return red_audio
+            except DownloaderError:
+                raise
             except Exception as e:
                 logger.warning(f"Reddit direct audio extraction error: {e}")
             raise DownloaderError(

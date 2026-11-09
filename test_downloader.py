@@ -20,6 +20,7 @@ from downloader import (
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
+    DownloaderError,
     VIDEO_EXTS,
     IMAGE_EXTS,
 )
@@ -543,6 +544,33 @@ class TestDownloader(unittest.TestCase):
                     self.assertEqual(res["type"], "audio")
                     self.assertEqual(res["duration"], 15)
                     self.assertTrue(Path(res["file_path"]).exists())
+
+    def test_reddit_audio_silent_video_detection(self):
+        """Verify that silent Reddit videos (audio_url=false) raise DownloaderError clearly."""
+        from unittest.mock import patch, MagicMock
+        import tempfile
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            mock_rs_html = """
+            <html>
+                <body>
+                    <h2 class="text-truncate">Silent Meme Video</h2>
+                    <a class="downloadbutton" href="https://sd.rapidsave.com/download.php?permalink=...&video_url=https://v.redd.it/xyz/DASH_720.mp4&audio_url=false">Download</a>
+                </body>
+            </html>
+            """
+            mock_rs_resp = MagicMock()
+            mock_rs_resp.status_code = 200
+            mock_rs_resp.text = mock_rs_html
+
+            with patch("downloader.requests.get", return_value=mock_rs_resp):
+                with patch("downloader.requests.head", side_effect=Exception("Connection refused")):
+                    with patch.object(d, "_download_reddit", return_value=None):
+                        with self.assertRaises(DownloaderError) as cm:
+                            d._download_reddit_audio("https://www.reddit.com/r/videos/comments/6rrwyj/silent/", temp_path)
+                        self.assertIn("silent video", str(cm.exception).lower())
 
     def test_reddit_domains_and_schemes(self):
         """Verify all Reddit domains, smart links, and schemes (http, https, www, bare) match."""
