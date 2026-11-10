@@ -550,10 +550,21 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
 
 
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds into a friendly human-readable time string (e.g. 03:45 or 1h 12m)."""
+    if not seconds or seconds <= 0:
+        return ""
+    total_sec = int(round(seconds))
+    hrs = total_sec // 3600
+    mins = (total_sec % 3600) // 60
+    secs = total_sec % 60
+    if hrs > 0:
+        return f"{hrs}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
 def get_promo_caption_footer() -> str:
-    """Return promotional channel footer text for media captions."""
-    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
-        return f"\n\n📢 <b>Join:</b> @{config.MOD_APK_CHANNEL} • @{config.WALLPAPER_CHANNEL}"
+    """Return promotional channel footer text for media captions (disabled in captions; buttons used instead)."""
     return ""
 
 
@@ -630,7 +641,6 @@ async def execute_download(
                 title = result.get("title", "Media")
                 duration = result.get("duration", 0)
                 filesize_mb = result.get("filesize_mb", 0)
-                bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else ""
 
                 # Save session for quick post-download action buttons
                 vid_session_id = uuid.uuid4().hex[:8]
@@ -647,12 +657,10 @@ async def execute_download(
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     file_path = result["file_path"]
                     caption = (
-                        f"🖼️ <b>{html.escape(title[:100])}</b>\n"
-                        f"📁 {html.escape(platform)} • 📦 {filesize_mb:.1f} MB"
+                        f"🖼️ <b>{html.escape(title[:100])}</b>\n\n"
+                        f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
+                        f"▫️ <b>Size:</b> {filesize_mb:.1f} MB"
                     )
-                    if bot_handle:
-                        caption += f"\n🤖 {html.escape(bot_handle)}"
-                    caption += get_promo_caption_footer()
                     photo_keyboard = get_media_post_keyboard()
 
                     with open(file_path, "rb") as f:
@@ -670,10 +678,11 @@ async def execute_download(
                             err_str = str(e).lower()
                             if "parse entities" in err_str:
                                 f.seek(0)
+                                plain_caption = f"🖼️ {title[:100]}\n\n▫️ Platform: {platform}\n▫️ Size: {filesize_mb:.1f} MB"
                                 await context.bot.send_photo(
                                     chat_id=chat_id,
                                     photo=f,
-                                    caption=f"🖼️ {title[:100]}\n📁 {platform} • 📦 {filesize_mb:.1f} MB",
+                                    caption=plain_caption,
                                     reply_markup=photo_keyboard,
                                     read_timeout=300,
                                     write_timeout=300,
@@ -696,13 +705,13 @@ async def execute_download(
                 elif media_type == "album":
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     file_paths: List[Path] = result.get("file_paths", [])
+                    item_count = len(file_paths)
                     caption = (
-                        f"📸 <b>{html.escape(title[:100])}</b>\n"
-                        f"📁 {html.escape(platform)} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
+                        f"📸 <b>{html.escape(title[:100])}</b>\n\n"
+                        f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
+                        f"▫️ <b>Items:</b> {item_count} files\n"
+                        f"▫️ <b>Total Size:</b> {filesize_mb:.1f} MB"
                     )
-                    if bot_handle:
-                        caption += f"\n🤖 {html.escape(bot_handle)}"
-                    caption += get_promo_caption_footer()
 
                     media = []
                     open_files = []
@@ -726,10 +735,11 @@ async def execute_download(
                         except Exception as e:
                             err_str = str(e).lower()
                             if "parse entities" in err_str:
+                                plain_caption = f"📸 {title[:100]}\n\n▫️ Platform: {platform}\n▫️ Items: {item_count} files\n▫️ Total Size: {filesize_mb:.1f} MB"
                                 for item in media:
                                     item.parse_mode = None
                                     if item.caption:
-                                        item.caption = f"📸 {title[:100]}\n📁 {platform} • 📦 {len(file_paths)} items ({filesize_mb:.1f} MB)"
+                                        item.caption = plain_caption
                                     if hasattr(item.media, "seek"):
                                         item.media.seek(0)
                                 await context.bot.send_media_group(
@@ -777,12 +787,10 @@ async def execute_download(
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_DOCUMENT)
                     file_path = result["file_path"]
                     caption = (
-                        f"📦 <b>{html.escape(title[:100])}</b>\n"
-                        f"📁 {html.escape(platform)} • {filesize_mb:.1f} MB"
+                        f"📦 <b>{html.escape(title[:100])}</b>\n\n"
+                        f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
+                        f"▫️ <b>Size:</b> {filesize_mb:.1f} MB"
                     )
-                    if bot_handle:
-                        caption += f"\n🤖 {html.escape(bot_handle)}"
-                    caption += get_promo_caption_footer()
                     doc_keyboard = get_media_post_keyboard()
 
                     with open(file_path, "rb") as f:
@@ -799,10 +807,11 @@ async def execute_download(
                         except Exception as e:
                             if "parse entities" in str(e).lower():
                                 f.seek(0)
+                                plain_caption = f"📦 {title[:100]}\n\n▫️ Platform: {platform}\n▫️ Size: {filesize_mb:.1f} MB"
                                 await context.bot.send_document(
                                     chat_id=chat_id,
                                     document=f,
-                                    caption=f"📦 {title[:100]}\n📁 {platform} • {filesize_mb:.1f} MB",
+                                    caption=plain_caption,
                                     reply_markup=doc_keyboard,
                                     read_timeout=600,
                                     write_timeout=600,
@@ -821,10 +830,7 @@ async def execute_download(
                     if desc:
                         clean_desc = desc[:300] + ("..." if len(desc) > 300 else "")
                         caption += f"\n\n<i>{html.escape(clean_desc)}</i>"
-                    caption += f"\n\n🌐 <b>Source:</b> {html.escape(platform)}"
-                    if bot_handle:
-                        caption += f"\n🤖 {html.escape(bot_handle)}"
-                    caption += get_promo_caption_footer()
+                    caption += f"\n\n▫️ <b>Source:</b> {html.escape(platform)}"
 
                     article_keyboard = None
                     article_buttons = []
@@ -854,7 +860,7 @@ async def execute_download(
                             except Exception as e:
                                 if "parse entities" in str(e).lower():
                                     f.seek(0)
-                                    plain_caption = f"📰 {title[:120]}\n\n{desc[:300]}\n\n🌐 Source: {platform}"
+                                    plain_caption = f"📰 {title[:120]}\n\n{desc[:300]}\n\n▫️ Source: {platform}"
                                     await context.bot.send_photo(
                                         chat_id=chat_id,
                                         photo=f,
@@ -887,9 +893,11 @@ async def execute_download(
                     is_split = result.get("is_split", False)
                     file_paths = result.get("file_paths", [file_path])
 
-                    dur_str = f" • ⏱️ {int(duration)}s" if duration else ""
-                    res_str = f" ({resolution}p)" if resolution else ""
-                    comp_str = f"\n⚡ <i>Auto-compressed to fit Telegram {config.MAX_FILE_SIZE_MB:.0f}MB limit</i>" if is_comp else ""
+                    dur_formatted = format_duration(duration)
+                    dur_line = f"\n▫️ <b>Duration:</b> {dur_formatted}" if dur_formatted else ""
+                    plain_dur_line = f"\n▫️ Duration: {dur_formatted}" if dur_formatted else ""
+                    res_line = f" • {resolution}p" if resolution else ""
+                    comp_str = f"\n\n⚡ <i>Compressed to fit Telegram limit</i>" if is_comp else ""
 
                     # Quick action button & channel recommendation keyboard
                     post_keyboard = get_media_post_keyboard(vid_session_id)
@@ -908,15 +916,12 @@ async def execute_download(
                             for part_idx, part_path in enumerate(file_paths):
                                 part_size_mb = part_path.stat().st_size / (1024 * 1024)
                                 part_caption = (
-                                    f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n"
-                                    f"📁 {html.escape(platform)}{res_str} • 📦 {part_size_mb:.1f} MB\n"
+                                    f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n\n"
+                                    f"▫️ <b>Platform:</b> {html.escape(platform)}{res_line}\n"
+                                    f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB\n"
                                     f"✂️ <i>Auto-split video delivery</i>"
                                 )
-                                if bot_handle:
-                                    part_caption += f"\n🤖 {html.escape(bot_handle)}"
                                 is_last = (part_idx == total_parts - 1)
-                                if is_last:
-                                    part_caption += get_promo_caption_footer()
                                 with open(part_path, "rb") as pf:
                                     try:
                                         await context.bot.send_video(
@@ -933,11 +938,17 @@ async def execute_download(
                                     except Exception as e:
                                         if "parse entities" in str(e).lower():
                                             pf.seek(0)
+                                            plain_part_caption = (
+                                                f"🎬 {title[:85]} (Part {part_idx + 1}/{total_parts})\n\n"
+                                                f"▫️ Platform: {platform}{res_line}\n"
+                                                f"▫️ Part Size: {part_size_mb:.1f} MB\n"
+                                                f"Auto-split video delivery"
+                                            )
                                             await context.bot.send_video(
                                                 chat_id=chat_id,
                                                 video=pf,
                                                 thumbnail=thumb_handle,
-                                                caption=f"🎬 {title[:85]} (Part {part_idx + 1}/{total_parts})\n📁 {platform} • 📦 {part_size_mb:.1f} MB",
+                                                caption=plain_part_caption,
                                                 supports_streaming=True,
                                                 reply_markup=post_keyboard if is_last else None,
                                                 read_timeout=600,
@@ -949,12 +960,10 @@ async def execute_download(
                                         thumb_handle.seek(0)
                         else:
                             caption = (
-                                f"🎬 <b>{html.escape(title[:100])}</b>\n"
-                                f"📁 {html.escape(platform)}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}{comp_str}"
+                                f"🎬 <b>{html.escape(title[:100])}</b>\n\n"
+                                f"▫️ <b>Platform:</b> {html.escape(platform)}{res_line}\n"
+                                f"▫️ <b>Size:</b> {filesize_mb:.1f} MB{dur_line}{comp_str}"
                             )
-                            if bot_handle:
-                                caption += f"\n🤖 {html.escape(bot_handle)}"
-                            caption += get_promo_caption_footer()
 
                             with open(file_path, "rb") as f:
                                 try:
@@ -977,6 +986,11 @@ async def execute_download(
                                         f.seek(0)
                                         if thumb_handle and hasattr(thumb_handle, "seek"):
                                             thumb_handle.seek(0)
+                                        plain_caption = (
+                                            f"🎬 {title[:100]}\n\n"
+                                            f"▫️ Platform: {platform}{res_line}\n"
+                                            f"▫️ Size: {filesize_mb:.1f} MB{plain_dur_line}"
+                                        )
                                         await context.bot.send_video(
                                             chat_id=chat_id,
                                             video=f,
@@ -984,7 +998,7 @@ async def execute_download(
                                             duration=int(duration) if duration else None,
                                             width=width,
                                             height=height,
-                                            caption=f"🎬 {title[:100]}\n📁 {platform}{res_str} • 📦 {filesize_mb:.1f} MB{dur_str}",
+                                            caption=plain_caption,
                                             supports_streaming=True,
                                             reply_markup=post_keyboard,
                                             read_timeout=600,
@@ -1071,16 +1085,20 @@ async def execute_download(
                 uploader = result.get("uploader", "Unknown")
                 duration = result.get("duration", 0)
                 filesize_mb = result.get("filesize_mb", 0)
-                bot_handle = f"@{context.bot.username}" if (context.bot and context.bot.username) else ""
 
                 thumb_handle = None
                 if thumb_file and Path(thumb_file).exists():
                     thumb_handle = open(thumb_file, "rb")
 
-                caption = f"🎵 <b>{html.escape(title[:100])}</b> (192kbps • {filesize_mb:.1f} MB)"
-                if bot_handle:
-                    caption += f"\n🤖 {html.escape(bot_handle)}"
-                caption += get_promo_caption_footer()
+                dur_formatted = format_duration(duration)
+                dur_line = f"\n▫️ <b>Duration:</b> {dur_formatted}" if dur_formatted else ""
+                plain_dur_line = f"\n▫️ Duration: {dur_formatted}" if dur_formatted else ""
+
+                caption = (
+                    f"🎵 <b>{html.escape(title[:100])}</b>\n\n"
+                    f"▫️ <b>Format:</b> MP3 (192 kbps)\n"
+                    f"▫️ <b>Size:</b> {filesize_mb:.1f} MB{dur_line}"
+                )
                 audio_keyboard = get_media_post_keyboard()
 
                 try:
@@ -1091,7 +1109,7 @@ async def execute_download(
                             thumbnail=thumb_handle,
                             title=title,
                             performer=uploader,
-                            duration=duration,
+                            duration=int(duration) if duration else None,
                             caption=caption,
                             parse_mode=ParseMode.HTML,
                             reply_markup=audio_keyboard,
@@ -1102,6 +1120,11 @@ async def execute_download(
                     if "parse entities" in str(e).lower():
                         if thumb_handle and hasattr(thumb_handle, "seek"):
                             thumb_handle.seek(0)
+                        plain_caption = (
+                            f"🎵 {title[:100]}\n\n"
+                            f"▫️ Format: MP3 (192 kbps)\n"
+                            f"▫️ Size: {filesize_mb:.1f} MB{plain_dur_line}"
+                        )
                         with open(file_path, "rb") as f:
                             await context.bot.send_audio(
                                 chat_id=chat_id,
@@ -1109,8 +1132,8 @@ async def execute_download(
                                 thumbnail=thumb_handle,
                                 title=title,
                                 performer=uploader,
-                                duration=duration,
-                                caption=f"🎵 {title[:100]} (192kbps • {filesize_mb:.1f} MB)",
+                                duration=int(duration) if duration else None,
+                                caption=plain_caption,
                                 reply_markup=audio_keyboard,
                                 read_timeout=300,
                                 write_timeout=300,

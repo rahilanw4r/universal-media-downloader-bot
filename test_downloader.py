@@ -367,8 +367,12 @@ class TestDownloader(unittest.TestCase):
         try:
             import bot
             footer = bot.get_promo_caption_footer()
-            self.assertIn("@ModRepository", footer)
-            self.assertIn("@WallpapersRepository", footer)
+            self.assertEqual(footer, "")
+
+            # Verify duration formatter
+            self.assertEqual(bot.format_duration(65), "01:05")
+            self.assertEqual(bot.format_duration(3665), "1:01:05")
+            self.assertEqual(bot.format_duration(0), "")
 
             kb = bot.get_media_post_keyboard(vid_session_id="test1234")
             self.assertIsNotNone(kb)
