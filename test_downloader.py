@@ -388,6 +388,10 @@ class TestDownloader(unittest.TestCase):
             self.assertEqual(len(kb_no_vid.inline_keyboard), 1)
             self.assertEqual(kb_no_vid.inline_keyboard[0][0].url, "https://t.me/ModRepository")
             self.assertEqual(kb_no_vid.inline_keyboard[0][1].url, "https://t.me/WallpapersRepository")
+
+            # Verify command handlers are defined and callable
+            self.assertTrue(callable(bot.modapk_command))
+            self.assertTrue(callable(bot.wallpaper_command))
         except ModuleNotFoundError as e:
             if "telegram" in str(e):
                 self.skipTest("python-telegram-bot not installed in test environment")

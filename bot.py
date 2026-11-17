@@ -240,12 +240,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     welcome_text = (
         f"👋 <b>Hello, {html.escape(user.first_name)}!</b>\n\n"
         f"Welcome to <b>Universal Media Downloader</b> 📥\n"
-        f"Download videos, photos, carousels & audio from <b>Instagram, YouTube, TikTok, X (Twitter), TeraBox, DiskWala, Pinterest, Reddit</b> & 1,000+ sites.\n\n"
+        f"Download videos, photos, carousels & audio in <b>full original quality</b> from "
+        f"<b>Instagram, YouTube, TikTok, X (Twitter), TeraBox, DiskWala, Pinterest, Reddit</b> & 1,000+ sites.\n\n"
         f"👥 <b>Works in Group Chats!</b>\n"
         f"Add me to any group chat and I'll automatically download and send every media link shared by members!\n\n"
         f"📌 <b>Quick Commands:</b>\n"
-        f"• <b>Paste any link</b> — Auto-download media\n"
+        f"• <b>Paste any link</b> — Auto-download media in original quality\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
+        f"• <code>/modapk</code> — Explore premium modded Android apps\n"
+        f"• <code>/wallpaper</code> — Browse 4K Ultra-HD wallpapers\n"
         f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
@@ -258,6 +261,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     keyboard = []
     if add_group_url:
         keyboard.append([InlineKeyboardButton("➕ Add Me to Your Group", url=add_group_url)])
+
+    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
+        keyboard.append([
+            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
+            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
+        ])
 
     keyboard.extend([
         [
@@ -307,6 +316,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📌 <b>All Commands:</b>\n"
         "• <code>/start</code> — Greeting, status & quick buttons\n"
         "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
+        "• <code>/modapk</code> — Explore premium modded Android apps & games\n"
+        "• <code>/wallpaper</code> — Browse high-resolution 4K wallpapers\n"
         "• <code>/stop</code> — Stop active downloads & clear sessions\n"
         "• <code>/ping</code> — Check server latency & health\n"
         "• <code>/stats</code> — User count & download analytics\n"
@@ -318,11 +329,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
-    keyboard = [
-        [
-            InlineKeyboardButton("💬 Chat with Admin", url=config.ADMIN_LINK),
-        ]
-    ]
+    keyboard = []
+    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
+        keyboard.append([
+            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
+            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
+        ])
+    keyboard.append([
+        InlineKeyboardButton("💬 Chat with Admin", url=config.ADMIN_LINK),
+    ])
 
     await update.effective_message.reply_text(
         help_text,
@@ -354,6 +369,60 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await update.message.reply_text(
         admin_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+async def modapk_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /modapk command with direct channel link and feature details."""
+    if not await check_user_auth(update, context):
+        return
+
+    text = (
+        "📱 <b>Premium Mod APKs & Unlocked Apps</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Looking for premium, ad-free, and unlocked Android apps & games?\n\n"
+        "Visit our official repository for safe, clean, and tested APKs:\n"
+        "• 🔓 <b>100% Virus-Free & Tested</b>\n"
+        "• ⚡ <b>Direct High-Speed Downloads</b>\n"
+        "• 🔄 <b>Regular Updates for Top Apps & Games</b>\n"
+        "• 🚫 <b>Zero Ads & Unlocked Premium Features</b>\n\n"
+        f"📢 <b>Channel:</b> @{config.MOD_APK_CHANNEL}"
+    )
+    keyboard = [
+        [InlineKeyboardButton("📱 Open Mod APKs Channel", url=config.MOD_APK_URL)],
+    ]
+    await update.effective_message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
+async def wallpaper_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /wallpaper command with direct channel link and gallery details."""
+    if not await check_user_auth(update, context):
+        return
+
+    text = (
+        "🖼️ <b>Ultra HD & 4K Wallpapers</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Upgrade your home screen and lock screen with curated high-resolution wallpapers!\n\n"
+        "Explore our official collection:\n"
+        "• 🌟 <b>Crystal Clear 4K & Amoled Quality</b>\n"
+        "• 🎨 <b>Anime, Nature, Minimalist, Cyberpunk & Abstract</b>\n"
+        "• 📱 <b>Perfect Aspect Ratio for Phones & Tablets</b>\n"
+        "• ✨ <b>Fresh Wallpapers Added Regularly</b>\n\n"
+        f"📢 <b>Channel:</b> @{config.WALLPAPER_CHANNEL}"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🖼️ Browse 4K Wallpapers", url=config.WALLPAPER_URL)],
+    ]
+    await update.effective_message.reply_text(
+        text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
@@ -590,7 +659,6 @@ async def execute_download(
     platform: str,
     action: str,
     context: ContextTypes.DEFAULT_TYPE,
-    resolution: Optional[int] = None,
 ) -> None:
     """Perform download with live progress bar and deliver media to Telegram with concurrency protection."""
     cur_task = asyncio.current_task()
@@ -633,7 +701,6 @@ async def execute_download(
             try:
                 result = await downloader.download_media(
                     url=target_url,
-                    resolution=resolution,
                     progress_callback=tracker.on_progress,
                 )
                 media_type = result.get("type", "video")
@@ -777,6 +844,19 @@ async def execute_download(
                                             )
                             else:
                                 raise
+
+                        album_kb = get_media_post_keyboard()
+                        if album_kb:
+                            try:
+                                await context.bot.send_message(
+                                    chat_id=chat_id,
+                                    text="✨ <b>Download complete!</b> Explore our channels:",
+                                    reply_markup=album_kb,
+                                    parse_mode=ParseMode.HTML,
+                                )
+                            except Exception:
+                                pass
+
                         analytics.track_download(chat_id, platform, "album")
                     finally:
                         for fh in open_files:
@@ -896,7 +976,6 @@ async def execute_download(
                     dur_formatted = format_duration(duration)
                     dur_line = f"\n▫️ <b>Duration:</b> {dur_formatted}" if dur_formatted else ""
                     plain_dur_line = f"\n▫️ Duration: {dur_formatted}" if dur_formatted else ""
-                    res_line = f" • {resolution}p" if resolution else ""
                     comp_str = f"\n\n⚡ <i>Compressed to fit Telegram limit</i>" if is_comp else ""
 
                     # Quick action button & channel recommendation keyboard
@@ -917,7 +996,7 @@ async def execute_download(
                                 part_size_mb = part_path.stat().st_size / (1024 * 1024)
                                 part_caption = (
                                     f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n\n"
-                                    f"▫️ <b>Platform:</b> {html.escape(platform)}{res_line}\n"
+                                    f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
                                     f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB\n"
                                     f"✂️ <i>Auto-split video delivery</i>"
                                 )
@@ -940,7 +1019,7 @@ async def execute_download(
                                             pf.seek(0)
                                             plain_part_caption = (
                                                 f"🎬 {title[:85]} (Part {part_idx + 1}/{total_parts})\n\n"
-                                                f"▫️ Platform: {platform}{res_line}\n"
+                                                f"▫️ Platform: {platform}\n"
                                                 f"▫️ Part Size: {part_size_mb:.1f} MB\n"
                                                 f"Auto-split video delivery"
                                             )
@@ -961,7 +1040,7 @@ async def execute_download(
                         else:
                             caption = (
                                 f"🎬 <b>{html.escape(title[:100])}</b>\n\n"
-                                f"▫️ <b>Platform:</b> {html.escape(platform)}{res_line}\n"
+                                f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
                                 f"▫️ <b>Size:</b> {filesize_mb:.1f} MB{dur_line}{comp_str}"
                             )
 
@@ -988,7 +1067,7 @@ async def execute_download(
                                             thumb_handle.seek(0)
                                         plain_caption = (
                                             f"🎬 {title[:100]}\n\n"
-                                            f"▫️ Platform: {platform}{res_line}\n"
+                                            f"▫️ Platform: {platform}\n"
                                             f"▫️ Size: {filesize_mb:.1f} MB{plain_dur_line}"
                                         )
                                         await context.bot.send_video(
@@ -1743,6 +1822,13 @@ def main():
     app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
+    app.add_handler(CommandHandler("modapk", modapk_command))
+    app.add_handler(CommandHandler("mod", modapk_command))
+    app.add_handler(CommandHandler("mods", modapk_command))
+    app.add_handler(CommandHandler("apk", modapk_command))
+    app.add_handler(CommandHandler("wallpaper", wallpaper_command))
+    app.add_handler(CommandHandler("wallpapers", wallpaper_command))
+    app.add_handler(CommandHandler("wall", wallpaper_command))
 
     # Buttons callback
     app.add_handler(CallbackQueryHandler(button_callback_handler))
