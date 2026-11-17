@@ -6,7 +6,6 @@ All notable changes to this project are documented here.
 
 ### Added
 - **Channel Recommendation Buttons:** Interactive inline keyboard buttons for Mod APKs (`@ModRepository`) and 4K Wallpapers (`@WallpapersRepository`) attached directly beneath media deliveries.
-- **Dedicated Discovery Commands:** Added `/modapk` (aliases `/mod`, `/mods`, `/apk`) and `/wallpaper` (aliases `/wallpapers`, `/wall`) with direct channel join buttons and featured descriptions.
 - **Reddit Video & Audio Extraction:** Improved Reddit URL parsing with direct `v.redd.it` extraction and automatic DASH audio+video stream merging, preventing article fallback on video posts.
 
 ### Changed

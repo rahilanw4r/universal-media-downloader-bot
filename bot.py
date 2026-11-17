@@ -247,8 +247,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"📌 <b>Quick Commands:</b>\n"
         f"• <b>Paste any link</b> — Auto-download media in original quality\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
-        f"• <code>/modapk</code> — Explore premium modded Android apps\n"
-        f"• <code>/wallpaper</code> — Browse 4K Ultra-HD wallpapers\n"
         f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
@@ -316,8 +314,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📌 <b>All Commands:</b>\n"
         "• <code>/start</code> — Greeting, status & quick buttons\n"
         "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
-        "• <code>/modapk</code> — Explore premium modded Android apps & games\n"
-        "• <code>/wallpaper</code> — Browse high-resolution 4K wallpapers\n"
         "• <code>/stop</code> — Stop active downloads & clear sessions\n"
         "• <code>/ping</code> — Check server latency & health\n"
         "• <code>/stats</code> — User count & download analytics\n"
@@ -369,60 +365,6 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await update.message.reply_text(
         admin_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
-
-
-async def modapk_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /modapk command with direct channel link and feature details."""
-    if not await check_user_auth(update, context):
-        return
-
-    text = (
-        "📱 <b>Premium Mod APKs & Unlocked Apps</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Looking for premium, ad-free, and unlocked Android apps & games?\n\n"
-        "Visit our official repository for safe, clean, and tested APKs:\n"
-        "• 🔓 <b>100% Virus-Free & Tested</b>\n"
-        "• ⚡ <b>Direct High-Speed Downloads</b>\n"
-        "• 🔄 <b>Regular Updates for Top Apps & Games</b>\n"
-        "• 🚫 <b>Zero Ads & Unlocked Premium Features</b>\n\n"
-        f"📢 <b>Channel:</b> @{config.MOD_APK_CHANNEL}"
-    )
-    keyboard = [
-        [InlineKeyboardButton("📱 Open Mod APKs Channel", url=config.MOD_APK_URL)],
-    ]
-    await update.effective_message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
-
-
-async def wallpaper_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /wallpaper command with direct channel link and gallery details."""
-    if not await check_user_auth(update, context):
-        return
-
-    text = (
-        "🖼️ <b>Ultra HD & 4K Wallpapers</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Upgrade your home screen and lock screen with curated high-resolution wallpapers!\n\n"
-        "Explore our official collection:\n"
-        "• 🌟 <b>Crystal Clear 4K & Amoled Quality</b>\n"
-        "• 🎨 <b>Anime, Nature, Minimalist, Cyberpunk & Abstract</b>\n"
-        "• 📱 <b>Perfect Aspect Ratio for Phones & Tablets</b>\n"
-        "• ✨ <b>Fresh Wallpapers Added Regularly</b>\n\n"
-        f"📢 <b>Channel:</b> @{config.WALLPAPER_CHANNEL}"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🖼️ Browse 4K Wallpapers", url=config.WALLPAPER_URL)],
-    ]
-    await update.effective_message.reply_text(
-        text,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
@@ -1822,13 +1764,6 @@ def main():
     app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
-    app.add_handler(CommandHandler("modapk", modapk_command))
-    app.add_handler(CommandHandler("mod", modapk_command))
-    app.add_handler(CommandHandler("mods", modapk_command))
-    app.add_handler(CommandHandler("apk", modapk_command))
-    app.add_handler(CommandHandler("wallpaper", wallpaper_command))
-    app.add_handler(CommandHandler("wallpapers", wallpaper_command))
-    app.add_handler(CommandHandler("wall", wallpaper_command))
 
     # Buttons callback
     app.add_handler(CallbackQueryHandler(button_callback_handler))
