@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## [2.7.0] - 2026-11-17
+
+### Added
+- **Channel Recommendation Buttons:** Interactive inline keyboard buttons for Mod APKs (`@ModRepository`) and 4K Wallpapers (`@WallpapersRepository`) attached directly beneath media deliveries.
+- **Dedicated Discovery Commands:** Added `/modapk` (aliases `/mod`, `/mods`, `/apk`) and `/wallpaper` (aliases `/wallpapers`, `/wall`) with direct channel join buttons and featured descriptions.
+- **Reddit Video & Audio Extraction:** Improved Reddit URL parsing with direct `v.redd.it` extraction and automatic DASH audio+video stream merging, preventing article fallback on video posts.
+
+### Changed
+- **Professional Output Captions:** Fully redesigned media delivery captions across video, photo, album, document, article, and audio outputs to feature clean, modern styling (Title, Platform, Size, Duration).
+- **Purged Quality Picker & Caption Clutter:** Completely eliminated resolution/quality picker prompts (always downloads full original quality) and removed channel text and bot usernames from captions.
+- **Dependency Upgrades:** Upgraded `gallery-dl` to 1.32.20 and added `beautifulsoup4` to requirements.
+
+### Security
+- **Privacy Audit:** Confirmed complete data privacy — tokens, session files, databases, cookies, and local downloads are strictly ignored by `.gitignore` and omitted from commits.
+
+---
+
 ## [2.6.0] - 2026-11-03
 
 ### Added

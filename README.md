@@ -64,6 +64,8 @@ flowchart LR
 |---|---|---|
 | `/start` | — | Start the bot and view quick options |
 | `/mp3 <url>` | `/audio` | Extract 192 kbps MP3 with embedded thumbnail |
+| `/modapk` | `/mod`, `/mods`, `/apk` | Browse verified premium modded Android apps |
+| `/wallpaper` | `/wallpapers`, `/wall` | Browse curated 4K Ultra-HD wallpapers |
 | `/stop` | `/cancel` | Cancel active downloads and clear current sessions |
 | `/ping` | — | Check server response latency and health |
 | `/stats` | `/analytics` | View download metrics and system uptime |

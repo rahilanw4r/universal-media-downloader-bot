@@ -22,7 +22,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 
 # Application Version
-BOT_VERSION = "2.6.0"
+BOT_VERSION = "2.7.0"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
