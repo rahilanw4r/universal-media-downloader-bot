@@ -850,7 +850,7 @@ async def execute_download(
                             try:
                                 await context.bot.send_message(
                                     chat_id=chat_id,
-                                    text="✨ <b>Download complete!</b> Explore our channels:",
+                                    text="✨ <b>Download complete!</b>",
                                     reply_markup=album_kb,
                                     parse_mode=ParseMode.HTML,
                                 )
