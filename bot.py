@@ -42,6 +42,8 @@ from downloader import (
     find_urls,
     detect_platform,
     detect_link_type,
+    parse_profile_input,
+    is_profile_url,
     render_progress_bar,
     DownloaderError,
     VIDEO_EXTS,
@@ -313,6 +315,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Add this bot to any group chat. When any member shares a link, the bot delivers the media directly into the group.\n\n"
         "📌 <b>All Commands:</b>\n"
         "• <code>/start</code> — Greeting, status & quick buttons\n"
+        "• <code>/pfp &lt;url or user&gt;</code> — Download HD profile pictures & avatars\n"
         "• <code>/mp3 &lt;url&gt;</code> — Extract MP3 audio\n"
         "• <code>/stop</code> — Stop active downloads & clear sessions\n"
         "• <code>/ping</code> — Check server latency & health\n"
@@ -627,13 +630,16 @@ async def execute_download(
         if action == "media":
             link_type = detect_link_type(target_url)
             clean_url_lower = target_url.lower()
+            is_profile_link = (link_type == "profile" or is_profile_url(target_url))
             is_video_link = (
-                link_type == "video"
-                or any(v_kw in clean_url_lower for v_kw in ("/reel/", "/reels/", "/tv/", "/video/", "/watch", "v.redd.it", "tiktok.com", "youtu", "/shorts/"))
+                not is_profile_link and (
+                    link_type == "video"
+                    or any(v_kw in clean_url_lower for v_kw in ("/reel/", "/reels/", "/tv/", "/video/", "/watch", "v.redd.it", "tiktok.com", "youtu", "/shorts/"))
+                )
             )
             if is_video_link:
                 init_action = ChatAction.UPLOAD_VIDEO
-            elif link_type == "image":
+            elif link_type in ("image", "profile") or is_profile_link:
                 init_action = ChatAction.UPLOAD_PHOTO
             elif link_type == "document":
                 init_action = ChatAction.UPLOAD_DOCUMENT
@@ -664,8 +670,76 @@ async def execute_download(
                 }
                 cleanup_expired_sessions()
 
+                # 0. Profile Picture / Avatar delivery
+                if result.get("is_profile"):
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
+                    file_path = result["file_path"]
+                    name = result.get("name") or title
+                    username = result.get("username", "")
+                    bio = result.get("bio", "").strip()
+                    profile_url = result.get("profile_url", "")
+
+                    caption = f"👤 <b>{html.escape(name)}</b>"
+                    if username and username.lower() not in name.lower():
+                        caption += f" (<code>@{html.escape(username)}</code>)"
+                    caption += f"\n\n▫️ <b>Platform:</b> {html.escape(platform)}"
+                    if bio:
+                        clean_bio = " ".join(bio.split())[:200] + ("..." if len(bio) > 200 else "")
+                        caption += f"\n▫️ <b>Bio:</b> <i>{html.escape(clean_bio)}</i>"
+                    caption += f"\n▫️ <b>Size:</b> {filesize_mb:.2f} MB"
+
+                    pfp_buttons = []
+                    if profile_url and profile_url.startswith("http"):
+                        pfp_buttons.append([InlineKeyboardButton("🔗 Open Profile", url=profile_url)])
+                    if config.PROMO_CHANNELS_ENABLED:
+                        promo_row = []
+                        if config.MOD_APK_CHANNEL:
+                            promo_row.append(InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL))
+                        if config.WALLPAPER_CHANNEL:
+                            promo_row.append(InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL))
+                        if promo_row:
+                            pfp_buttons.append(promo_row)
+                    pfp_keyboard = InlineKeyboardMarkup(pfp_buttons) if pfp_buttons else None
+
+                    with open(file_path, "rb") as f:
+                        try:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=f,
+                                caption=caption,
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=pfp_keyboard,
+                                read_timeout=300,
+                                write_timeout=300,
+                            )
+                        except Exception as e:
+                            err_str = str(e).lower()
+                            if "parse entities" in err_str:
+                                f.seek(0)
+                                plain_caption = f"👤 {name} (@{username})\n\n▫️ Platform: {platform}\n▫️ Size: {filesize_mb:.2f} MB"
+                                await context.bot.send_photo(
+                                    chat_id=chat_id,
+                                    photo=f,
+                                    caption=plain_caption,
+                                    reply_markup=pfp_keyboard,
+                                    read_timeout=300,
+                                    write_timeout=300,
+                                )
+                            elif "image_process_failed" in err_str:
+                                f.seek(0)
+                                await context.bot.send_document(
+                                    chat_id=chat_id,
+                                    document=f,
+                                    caption=caption,
+                                    parse_mode=ParseMode.HTML,
+                                    reply_markup=pfp_keyboard,
+                                )
+                            else:
+                                raise
+                    analytics.track_download(chat_id, platform, "profile")
+
                 # 1. Single Photo delivery
-                if media_type == "photo":
+                elif media_type == "photo":
                     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_PHOTO)
                     file_path = result["file_path"]
                     caption = (
@@ -1242,20 +1316,42 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not message or not message.text:
         return
 
-    urls = find_urls(message.text)
+    text = message.text.strip()
+    urls = find_urls(text)
     if not urls:
+        # Check if the user sent a profile username/handle, e.g. "@cristiano" or "ig:cristiano" or "github torvalds"
+        parsed_pfp = parse_profile_input(text)
+        if parsed_pfp:
+            plat, uname, can_url = parsed_pfp
+            status_msg = await message.reply_text(
+                f"👤 <b>Fetching {html.escape(plat)} profile picture for @{html.escape(uname)}...</b>",
+                parse_mode=ParseMode.HTML,
+            )
+            await execute_download(
+                chat_id=message.chat.id,
+                status_msg=status_msg,
+                target_url=can_url,
+                platform=plat,
+                action="media",
+                context=context,
+            )
         return
 
     target_url = urls[0]
     platform = detect_platform(target_url)
     link_type = detect_link_type(target_url)
     clean_url_lower = target_url.lower()
+    is_profile_link = (link_type == "profile" or is_profile_url(target_url))
     is_video_link = (
-        link_type == "video"
-        or any(v_kw in clean_url_lower for v_kw in ("/reel/", "/reels/", "/tv/", "/video/", "/watch", "v.redd.it", "tiktok.com", "youtu", "/shorts/"))
+        not is_profile_link and (
+            link_type == "video"
+            or any(v_kw in clean_url_lower for v_kw in ("/reel/", "/reels/", "/tv/", "/video/", "/watch", "v.redd.it", "tiktok.com", "youtu", "/shorts/"))
+        )
     )
 
-    if is_video_link:
+    if is_profile_link:
+        status_text = f"👤 <b>Fetching {html.escape(platform)} profile picture...</b>"
+    elif is_video_link:
         status_text = f"🎬 <b>Fetching video from {html.escape(platform)}...</b>"
     elif link_type == "image":
         status_text = f"⚡ <b>Fetching image from {html.escape(platform)}...</b>"
@@ -1441,6 +1537,63 @@ async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         target_url=target_url,
         platform=platform,
         action="audio",
+        context=context,
+    )
+
+
+async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /profile, /pfp, and /avatar commands to download HD profile pictures."""
+    if not await check_user_auth(update, context):
+        return
+
+    message = update.message
+    if not message or not message.text:
+        return
+
+    parts = message.text.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        await message.reply_text(
+            "👤 <b>Profile Picture Downloader (HD)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Download full-resolution profile pictures & avatars from any platform:\n\n"
+            "💡 <b>Usage Examples:</b>\n"
+            "• <code>/pfp https://instagram.com/cristiano</code>\n"
+            "• <code>/pfp instagram cristiano</code>\n"
+            "• <code>/pfp github torvalds</code>\n"
+            "• <code>/pfp x elonmusk</code>\n"
+            "• <code>/pfp @cristiano</code>\n"
+            "• <code>/pfp t.me/durov</code>\n\n"
+            "<i>You can also paste any profile link directly in chat!</i>",
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+        return
+
+    query_str = parts[1].strip()
+    parsed = parse_profile_input(query_str)
+    if not parsed:
+        await message.reply_text(
+            "⚠️ <b>Could not recognize profile or username.</b>\n\n"
+            "Please provide a profile link or platform name with username:\n"
+            "• Example: <code>/pfp instagram cristiano</code>\n"
+            "• Example: <code>/pfp https://github.com/torvalds</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    platform, username, canonical_url = parsed
+    target_url = canonical_url or query_str
+
+    status_msg = await message.reply_text(
+        f"👤 <b>Fetching {html.escape(platform)} profile picture for @{html.escape(username)}...</b>",
+        parse_mode=ParseMode.HTML,
+    )
+    await execute_download(
+        chat_id=message.chat.id,
+        status_msg=status_msg,
+        target_url=target_url,
+        platform=platform,
+        action="media",
         context=context,
     )
 
@@ -1695,6 +1848,7 @@ async def post_init(application: Application) -> None:
     """Register bot commands in Telegram's native command menu."""
     commands = [
         BotCommand("start", "Start the bot & main menu"),
+        BotCommand("pfp", "Download HD profile picture / avatar"),
         BotCommand("mp3", "Extract MP3 audio (192kbps)"),
         BotCommand("stop", "Stop active downloads & clear sessions"),
         BotCommand("ping", "Check bot latency & server status"),
@@ -1792,6 +1946,9 @@ def main():
     app.add_handler(CommandHandler("cookie", cookies_command))
     app.add_handler(CommandHandler("mp3", audio_command))
     app.add_handler(CommandHandler("audio", audio_command))
+    app.add_handler(CommandHandler("pfp", profile_command))
+    app.add_handler(CommandHandler("profile", profile_command))
+    app.add_handler(CommandHandler("avatar", profile_command))
 
     # Buttons callback
     app.add_handler(CallbackQueryHandler(button_callback_handler))

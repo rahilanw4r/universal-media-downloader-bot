@@ -53,6 +53,7 @@ Equipped with support for self-hosted `telegram-bot-api`, it shatters the defaul
 |---|---|
 | 💎 **100% Full Original Quality** | Media is always fetched at highest available native resolution and bitrate without lossy transcoding. |
 | 🚀 **Up to 2 GB File Delivery** | Seamless integration with self-hosted `telegram-bot-api` unlocks 2,000 MB file uploads. |
+| 👤 **HD Profile Downloader** | Download full-resolution profile avatars from Instagram, TikTok, X, GitHub, Telegram, YouTube, Reddit, and Threads via `/pfp`, profile link, or `@handle`. |
 | ✂️ **Lossless Auto-Splitting** | Videos exceeding upload limits are automatically sliced into sequential parts using FFmpeg stream-copy (`-c copy`) in seconds. |
 | 🎵 **Instant MP3 Extraction** | Convert any video link into a pristine 192 kbps MP3 with embedded album artwork via `/mp3` or inline button. |
 | 👥 **Native Group Chat Support** | Add to any Telegram group; automatically monitors and delivers media links shared by members. |
@@ -179,6 +180,7 @@ All settings are managed via environment variables in `.env`:
 | Command | Shortcut | Description |
 |---|---|---|
 | `/start` | — | Display bot welcome menu, status, and quick-action shortcuts |
+| `/pfp <url or user>` | `/profile`, `/avatar` | Download full-resolution profile picture / avatar from any platform |
 | `/mp3 <url>` | `/audio` | Extract audio as 192 kbps MP3 with embedded thumbnail album art |
 | `/stop` | `/cancel` | Cancel active downloads and clear current user sessions |
 | `/ping` | — | Check server response latency, API status, and system health |

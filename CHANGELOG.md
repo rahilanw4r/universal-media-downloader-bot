@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## [2.8.0] - 2026-11-18
+
+### Added
+- **Full HD Profile Picture & Avatar Downloader:**
+  - Automatically downloads full-resolution profile pictures and avatars across Instagram, TikTok, X (Twitter), GitHub, Telegram, YouTube, Pinterest, Reddit, and Threads.
+  - Supports direct profile link sharing (e.g. `https://instagram.com/cristiano`, `https://github.com/torvalds`), dedicated commands (`/pfp`, `/profile`, `/avatar`), platform-prefix queries (`ig:cristiano`, `gh:torvalds`), and `@handle` inputs.
+  - Displays user display name, handle, platform, bio description, avatar file size, `[ 🔗 Open Profile ]` URL button, and channel recommendation buttons.
+
+### Fixed
+- **Standardized Inline Buttons & Captions:**
+  - Attached `[ 🎵 Extract MP3 Audio ]` and `[ 📱 Mod APKs | 🖼️ Wallpapers ]` consistently across all media download types (single videos, split video parts, carousels/albums, single photos, documents/archives, and MP3 audio).
+  - Ensured multi-part auto-split video parts all carry action and channel buttons.
+  - Standardized bullet metadata formatting across all caption fallbacks.
+
+---
+
 ## [2.7.0] - 2026-11-17
 
 ### Added

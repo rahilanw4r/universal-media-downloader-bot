@@ -20,6 +20,8 @@ from downloader import (
     extract_v_reddit_id,
     extract_reddit_video_id,
     is_github_url,
+    is_profile_url,
+    parse_profile_input,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -430,6 +432,86 @@ class TestDownloader(unittest.TestCase):
             if "telegram" in str(e):
                 self.skipTest("python-telegram-bot not installed in test environment")
             raise
+
+    def test_profile_helpers(self):
+        # 1. Profile URL detection
+        self.assertTrue(is_profile_url("https://instagram.com/cristiano"))
+        self.assertTrue(is_profile_url("https://www.instagram.com/cristiano/"))
+        self.assertTrue(is_profile_url("https://instagram.com/cristiano?igsh=123"))
+        self.assertFalse(is_profile_url("https://instagram.com/p/C-1234567/"))
+        self.assertFalse(is_profile_url("https://instagram.com/reel/C-1234567/"))
+
+        self.assertTrue(is_profile_url("https://x.com/elonmusk"))
+        self.assertTrue(is_profile_url("https://twitter.com/elonmusk"))
+        self.assertFalse(is_profile_url("https://twitter.com/elonmusk/status/123"))
+
+        self.assertTrue(is_profile_url("https://github.com/torvalds"))
+        self.assertFalse(is_profile_url("https://github.com/torvalds/linux"))
+
+        self.assertTrue(is_profile_url("https://t.me/durov"))
+        self.assertFalse(is_profile_url("https://t.me/joinchat/123"))
+
+        self.assertTrue(is_profile_url("https://youtube.com/@MrBeast"))
+        self.assertFalse(is_profile_url("https://youtube.com/watch?v=123"))
+
+        self.assertTrue(is_profile_url("https://www.tiktok.com/@khaby.lame"))
+        self.assertTrue(is_profile_url("https://pinterest.com/pinterest/"))
+        self.assertTrue(is_profile_url("https://reddit.com/user/spez"))
+        self.assertTrue(is_profile_url("https://threads.net/@zuck"))
+
+        # 2. Input parsing (URL, platform:username, platform username, @handle)
+        res_ig = parse_profile_input("https://instagram.com/cristiano")
+        self.assertEqual(res_ig, ("Instagram", "cristiano", "https://www.instagram.com/cristiano/"))
+
+        res_pfx = parse_profile_input("github:torvalds")
+        self.assertEqual(res_pfx, ("GitHub", "torvalds", "https://github.com/torvalds"))
+
+        res_words = parse_profile_input("x elonmusk")
+        self.assertEqual(res_words, ("X (Twitter)", "elonmusk", "https://x.com/elonmusk"))
+
+        res_at = parse_profile_input("@cristiano")
+        self.assertEqual(res_at, ("Instagram", "cristiano", "https://www.instagram.com/cristiano/"))
+
+        # 3. detect_link_type and detect_platform
+        self.assertEqual(detect_link_type("https://instagram.com/cristiano"), "profile")
+        self.assertEqual(detect_platform("https://instagram.com/cristiano"), "Instagram")
+        self.assertEqual(detect_link_type("https://github.com/torvalds"), "profile")
+        self.assertEqual(detect_platform("https://github.com/torvalds"), "GitHub")
+        self.assertEqual(detect_link_type("https://t.me/durov"), "profile")
+        self.assertEqual(detect_platform("https://t.me/durov"), "Telegram")
+
+        # 4. Bot command callable
+        try:
+            import bot
+            self.assertTrue(callable(bot.profile_command))
+        except ModuleNotFoundError:
+            pass
+
+        # 5. MediaDownloader._download_profile_avatar extraction and file saving
+        md = MediaDownloader()
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch("requests.get") as mock_get:
+                mock_resp = mock.MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {
+                    "name": "Linus Torvalds",
+                    "avatar_url": "https://avatars.githubusercontent.com/u/1024025?v=4",
+                    "bio": "Creator of Linux",
+                }
+                fake_img = mock.MagicMock()
+                fake_img.status_code = 200
+                fake_img.headers = {"content-type": "image/jpeg"}
+                fake_img.content = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 200
+                mock_get.side_effect = [mock_resp, fake_img]
+
+                res = md._download_profile_avatar("GitHub", "torvalds", "https://github.com/torvalds", Path(td))
+                self.assertEqual(res["type"], "photo")
+                self.assertTrue(res["is_profile"])
+                self.assertEqual(res["platform"], "GitHub")
+                self.assertEqual(res["username"], "torvalds")
+                self.assertIn("Linus Torvalds", res["title"])
+                self.assertTrue(res["file_path"].exists())
 
     def test_reddit_helpers(self):
         self.assertTrue(is_reddit_url("https://www.reddit.com/r/funny/comments/12345/title/"))

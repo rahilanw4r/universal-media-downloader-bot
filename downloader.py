@@ -15,7 +15,7 @@ import math
 import uuid
 from urllib.parse import quote, unquote, urlparse, parse_qs
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 
 try:
     from PIL import Image
@@ -47,6 +47,11 @@ try:
     import instaloader
 except ImportError:
     instaloader = None
+
+try:
+    from curl_cffi import requests as cffi_requests
+except ImportError:
+    cffi_requests = None
 
 import config
 
@@ -218,8 +223,191 @@ def _get_url_host(url: str) -> str:
         return ""
 
 
+INSTAGRAM_RESERVED = {
+    "p", "reel", "reels", "tv", "stories", "explore", "accounts", "direct",
+    "api", "about", "legal", "developer", "static", "directory", "settings",
+    "emails", "download", "graphql", "channel",
+}
+
+TWITTER_RESERVED = {
+    "status", "statuses", "i", "home", "explore", "notifications", "messages",
+    "search", "hashtag", "intent", "settings", "tos", "privacy", "about",
+    "login", "signup", "help", "download", "rules",
+}
+
+GITHUB_RESERVED = {
+    "features", "topics", "collections", "trending", "events", "marketplace",
+    "pricing", "settings", "notifications", "search", "about", "contact",
+    "security", "login", "join", "pulls", "issues", "orgs", "stars",
+    "sponsors", "explore", "site", "customer-stories", "enterprise", "git-guides",
+}
+
+TELEGRAM_RESERVED = {
+    "joinchat", "c", "share", "addstickers", "addtheme", "s", "iv",
+    "proxy", "socks", "contact", "setlanguage", "login",
+}
+
+PINTEREST_RESERVED = {
+    "pin", "ideas", "search", "today", "settings", "business", "about",
+    "newsroom", "careers", "press",
+}
+
+
+def _format_canonical_profile_tuple(platform: str, username: str) -> Tuple[str, str, str]:
+    """Helper to return standardized tuple (platform, username, canonical_url) for profile."""
+    if platform == "Instagram":
+        return ("Instagram", username, f"https://www.instagram.com/{username}/")
+    elif platform == "GitHub":
+        return ("GitHub", username, f"https://github.com/{username}")
+    elif platform == "Telegram":
+        return ("Telegram", username, f"https://t.me/{username}")
+    elif platform == "X (Twitter)":
+        return ("X (Twitter)", username, f"https://x.com/{username}")
+    elif platform == "YouTube":
+        return ("YouTube", username, f"https://www.youtube.com/@{username}")
+    elif platform == "TikTok":
+        return ("TikTok", username, f"https://www.tiktok.com/@{username}")
+    elif platform == "Reddit":
+        return ("Reddit", username, f"https://www.reddit.com/user/{username}")
+    elif platform == "Pinterest":
+        return ("Pinterest", username, f"https://www.pinterest.com/{username}/")
+    elif platform == "Threads":
+        return ("Threads", username, f"https://www.threads.net/@{username}")
+    return (platform, username, "")
+
+
+def parse_profile_input(text: str) -> Optional[Tuple[str, str, str]]:
+    """
+    Parse a profile URL, platform:username identifier, or @handle into:
+    (Platform, Username, CanonicalProfileURL).
+    Supports Instagram, TikTok, X (Twitter), GitHub, Telegram, YouTube, Reddit, Pinterest, and Threads.
+    """
+    if not text:
+        return None
+    raw = text.strip()
+
+    # 1. URL pattern parsing
+    if raw.startswith("http://") or raw.startswith("https://") or "://" in raw or raw.startswith("www."):
+        u = raw if "://" in raw else "https://" + raw
+        try:
+            parsed = urlparse(u)
+            host = parsed.netloc.lower()
+            if host.startswith("www."):
+                host = host[4:]
+            path = parsed.path.strip("/")
+            parts = [p for p in path.split("/") if p]
+
+            # Instagram
+            if host in ("instagram.com", "instagr.am"):
+                if len(parts) == 1 and parts[0].lower() not in INSTAGRAM_RESERVED:
+                    if re.match(r"^[a-zA-Z0-9._]{1,30}$", parts[0]):
+                        return ("Instagram", parts[0], f"https://www.instagram.com/{parts[0]}/")
+
+            # TikTok
+            if any(host == d or host.endswith("." + d) for d in ("tiktok.com",)):
+                m = re.search(r"/@([a-zA-Z0-9._]{2,24})", parsed.path)
+                if m and not any(kw in parsed.path for kw in ("/video/", "/v/")):
+                    return ("TikTok", m.group(1), f"https://www.tiktok.com/@{m.group(1)}")
+
+            # Twitter / X
+            if host in ("twitter.com", "x.com", "mobile.twitter.com"):
+                if len(parts) == 1 and parts[0].lower() not in TWITTER_RESERVED:
+                    if re.match(r"^[a-zA-Z0-9_]{1,15}$", parts[0]):
+                        return ("X (Twitter)", parts[0], f"https://x.com/{parts[0]}")
+
+            # GitHub
+            if host == "github.com":
+                if len(parts) == 1 and parts[0].lower() not in GITHUB_RESERVED:
+                    if re.match(r"^[a-zA-Z0-9-]{1,39}$", parts[0]):
+                        return ("GitHub", parts[0], f"https://github.com/{parts[0]}")
+
+            # Telegram
+            if host == "t.me":
+                if len(parts) == 1 and parts[0].lower() not in TELEGRAM_RESERVED:
+                    if re.match(r"^[a-zA-Z0-9_]{5,32}$", parts[0]):
+                        return ("Telegram", parts[0], f"https://t.me/{parts[0]}")
+
+            # YouTube
+            if any(host == d or host.endswith("." + d) for d in ("youtube.com", "youtu.be")):
+                m = re.search(r"/(?:@|c/|channel/|user/)([a-zA-Z0-9._-]+)", parsed.path)
+                if m and not any(kw in parsed.path for kw in ("/watch", "/shorts/", "/playlist")):
+                    cand = m.group(1)
+                    c_url = f"https://www.youtube.com/@{cand}" if not cand.startswith("UC") else f"https://www.youtube.com/channel/{cand}"
+                    return ("YouTube", cand, c_url)
+
+            # Pinterest
+            if any(host == d or host.endswith("." + d) for d in ("pinterest.com",)):
+                if len(parts) == 1 and parts[0].lower() not in PINTEREST_RESERVED:
+                    if re.match(r"^[a-zA-Z0-9_-]{1,30}$", parts[0]):
+                        return ("Pinterest", parts[0], f"https://www.pinterest.com/{parts[0]}/")
+
+            # Reddit
+            if any(host == d or host.endswith("." + d) for d in ("reddit.com",)):
+                m = re.search(r"/(?:user|u)/([a-zA-Z0-9_-]{3,20})", parsed.path)
+                if m and "/comments/" not in parsed.path:
+                    return ("Reddit", m.group(1), f"https://www.reddit.com/user/{m.group(1)}")
+
+            # Threads
+            if host == "threads.net":
+                m = re.search(r"/@([a-zA-Z0-9._]{1,30})", parsed.path)
+                if m and "/post/" not in parsed.path:
+                    return ("Threads", m.group(1), f"https://www.threads.net/@{m.group(1)}")
+        except Exception:
+            pass
+        return None
+
+    # 2. Key-value prefix or two words: platform:username or platform username
+    prefix_map = {
+        "instagram": "Instagram", "ig": "Instagram", "insta": "Instagram",
+        "twitter": "X (Twitter)", "x": "X (Twitter)",
+        "github": "GitHub", "gh": "GitHub",
+        "telegram": "Telegram", "tg": "Telegram",
+        "youtube": "YouTube", "yt": "YouTube",
+        "tiktok": "TikTok", "tik": "TikTok",
+        "reddit": "Reddit",
+        "pinterest": "Pinterest", "pin": "Pinterest",
+        "threads": "Threads",
+    }
+
+    # Pattern: "platform:username" or "platform/username"
+    m_sep = re.match(r"^([a-zA-Z]+)[:/](@?[a-zA-Z0-9._-]+)$", raw)
+    if m_sep:
+        p_name = m_sep.group(1).lower()
+        u_name = m_sep.group(2).lstrip("@")
+        if p_name in prefix_map:
+            plat = prefix_map[p_name]
+            return _format_canonical_profile_tuple(plat, u_name)
+
+    # Pattern: "platform username"
+    words = raw.split()
+    if len(words) == 2 and words[0].lower() in prefix_map:
+        plat = prefix_map[words[0].lower()]
+        u_name = words[1].lstrip("@")
+        return _format_canonical_profile_tuple(plat, u_name)
+
+    # Pattern: "@username" -> Default to Instagram
+    if raw.startswith("@") and re.match(r"^@[a-zA-Z0-9._]{1,30}$", raw):
+        return ("Instagram", raw[1:], f"https://www.instagram.com/{raw[1:]}/")
+
+    return None
+
+
+def is_profile_url(url: str) -> bool:
+    """Check if given URL corresponds to a user/channel profile page across supported platforms."""
+    if not url:
+        return False
+    if not (url.startswith("http://") or url.startswith("https://") or "://" in url or url.startswith("www.")):
+        return False
+    return parse_profile_input(url) is not None
+
+
 def detect_platform(url: str) -> str:
     """Detect platform or brand name from URL using strict host-level matching."""
+    if is_profile_url(url):
+        p_info = parse_profile_input(url)
+        if p_info:
+            return p_info[0]
+
     host = _get_url_host(url)
     if not host:
         return "Web Video"
@@ -285,10 +473,14 @@ def detect_platform(url: str) -> str:
 def detect_link_type(url: str) -> str:
     """
     Classify the given URL into a semantic category:
-    'image', 'video', 'audio', 'document', 'article', 'social', 'cloud', or 'webpage'.
+    'profile', 'image', 'video', 'audio', 'document', 'article', 'social', 'cloud', or 'webpage'.
     """
     if not url:
         return "webpage"
+
+    # Profile & Avatar links
+    if is_profile_url(url):
+        return "profile"
 
     clean_url = url.split("?")[0].lower()
     host = _get_url_host(url)
@@ -2994,6 +3186,342 @@ class MediaDownloader:
 
         raise DownloaderError(f"Unable to download GitHub repository from {url}. Please ensure the repository is public.")
 
+    def _download_profile_avatar(
+        self,
+        platform: str,
+        username: str,
+        profile_url: str,
+        temp_dir: Path,
+    ) -> Dict[str, Any]:
+        """
+        Extract and download full-resolution profile picture/avatar for a user.
+        Supports Instagram, GitHub, Telegram, X (Twitter), YouTube, TikTok, Reddit, Pinterest, Threads.
+        """
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        avatar_url: Optional[str] = None
+        name: str = username
+        bio: str = ""
+        plat_lower = platform.lower()
+
+        # 1. GitHub
+        if "github" in plat_lower or plat_lower == "gh":
+            profile_url = profile_url or f"https://github.com/{username}"
+            if requests:
+                try:
+                    r = requests.get(f"https://api.github.com/users/{username}", headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        data = r.json()
+                        raw_av = data.get("avatar_url")
+                        if raw_av:
+                            avatar_url = raw_av.split("?")[0] + "?s=1024"
+                        name = data.get("name") or username
+                        bio = data.get("bio") or ""
+                except Exception as e:
+                    logger.debug("GitHub API profile fetch error: %s", e)
+            if not avatar_url:
+                avatar_url = f"https://avatars.githubusercontent.com/{username}"
+
+        # 2. Telegram
+        elif "telegram" in plat_lower or plat_lower == "tg":
+            profile_url = profile_url or f"https://t.me/{username}"
+            if requests and BeautifulSoup:
+                try:
+                    r = requests.get(profile_url, headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        og_title = soup.find("meta", property="og:title")
+                        og_desc = soup.find("meta", property="og:description")
+                        if og_img and og_img.get("content"):
+                            avatar_url = og_img.get("content")
+                        if og_title and og_title.get("content"):
+                            name = og_title.get("content").strip()
+                        if og_desc and og_desc.get("content"):
+                            bio = og_desc.get("content").strip()
+                except Exception as e:
+                    logger.debug("Telegram profile fetch error: %s", e)
+
+        # 3. Twitter / X
+        elif "twitter" in plat_lower or plat_lower in ("x", "x (twitter)"):
+            profile_url = profile_url or f"https://x.com/{username}"
+            if requests:
+                try:
+                    r = requests.get(f"https://api.fxtwitter.com/{username}", headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        u_data = r.json().get("user", {})
+                        raw_av = u_data.get("avatar_url", "")
+                        if raw_av:
+                            avatar_url = raw_av.replace("_normal.", ".")
+                        name = u_data.get("name") or username
+                        bio = u_data.get("description") or ""
+                except Exception as e:
+                    logger.debug("FxTwitter avatar fetch error: %s", e)
+            if not avatar_url and requests and BeautifulSoup:
+                try:
+                    r = requests.get(f"https://x.com/{username}", headers=headers, timeout=10)
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        if og_img and og_img.get("content"):
+                            avatar_url = og_img.get("content").replace("_normal.", ".")
+                except Exception:
+                    pass
+
+        # 4. Instagram
+        elif "instagram" in plat_lower or plat_lower == "ig":
+            profile_url = profile_url or f"https://www.instagram.com/{username}/"
+            client = cffi_requests if cffi_requests else requests
+            kwargs = {"impersonate": "chrome124"} if cffi_requests else {}
+
+            # Strategy A: Session-authenticated web profile info API
+            if client and (getattr(config, "INSTAGRAM_SESSION_ID", "") or getattr(config, "INSTAGRAM_COOKIES", "")):
+                try:
+                    ig_headers = dict(headers)
+                    ig_headers["X-IG-App-ID"] = "936619743392459"
+                    cookie_header = ""
+                    if getattr(config, "INSTAGRAM_SESSION_ID", ""):
+                        cookie_header = f"sessionid={config.INSTAGRAM_SESSION_ID}; "
+                    if cookie_header:
+                        ig_headers["Cookie"] = cookie_header
+                    r = client.get(
+                        f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}",
+                        headers=ig_headers,
+                        timeout=12,
+                        **kwargs,
+                    )
+                    if r.status_code == 200:
+                        u_data = r.json().get("data", {}).get("user", {})
+                        avatar_url = u_data.get("profile_pic_url_hd") or u_data.get("profile_pic_url")
+                        name = u_data.get("full_name") or username
+                        bio = u_data.get("biography") or ""
+                except Exception as e:
+                    logger.debug("Instagram auth web profile info error: %s", e)
+
+            # Strategy B: OpenGraph & HTML parsing
+            if not avatar_url and client:
+                try:
+                    r = client.get(profile_url, headers=headers, timeout=12, **kwargs)
+                    if r.status_code == 200:
+                        if BeautifulSoup:
+                            soup = BeautifulSoup(r.text, "html.parser")
+                            og_img = soup.find("meta", property="og:image")
+                            og_title = soup.find("meta", property="og:title")
+                            og_desc = soup.find("meta", property="og:description")
+                            if og_img and og_img.get("content"):
+                                avatar_url = og_img.get("content")
+                            if og_title and og_title.get("content"):
+                                title_text = og_title.get("content")
+                                name = title_text.split("•")[0].strip() or username
+                            if og_desc and og_desc.get("content"):
+                                bio = og_desc.get("content").strip()
+                        if not avatar_url:
+                            matches = re.findall(r'"profile_pic_url_hd":"([^"]+)"', r.text) or re.findall(r'"profile_pic_url":"([^"]+)"', r.text)
+                            if matches:
+                                avatar_url = matches[0].replace(r"\u0026", "&")
+                except Exception as e:
+                    logger.debug("Instagram HTML avatar scrape error: %s", e)
+
+        # 5. YouTube
+        elif "youtube" in plat_lower or plat_lower == "yt":
+            profile_url = profile_url or f"https://www.youtube.com/@{username}"
+            if requests and BeautifulSoup:
+                try:
+                    r = requests.get(profile_url, headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        og_title = soup.find("meta", property="og:title")
+                        og_desc = soup.find("meta", property="og:description")
+                        if og_img and og_img.get("content"):
+                            raw_img = og_img.get("content")
+                            avatar_url = re.sub(r"=s\d+[^=]*$", "=s1024-c-k-c0x00ffffff-no-rj", raw_img)
+                        if og_title and og_title.get("content"):
+                            name = og_title.get("content").strip()
+                        if og_desc and og_desc.get("content"):
+                            bio = og_desc.get("content").strip()
+                except Exception as e:
+                    logger.debug("YouTube profile fetch error: %s", e)
+
+        # 6. Pinterest
+        elif "pinterest" in plat_lower:
+            profile_url = profile_url or f"https://www.pinterest.com/{username}/"
+            if requests and BeautifulSoup:
+                try:
+                    r = requests.get(profile_url, headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        og_title = soup.find("meta", property="og:title")
+                        og_desc = soup.find("meta", property="og:description")
+                        if og_img and og_img.get("content"):
+                            raw_img = og_img.get("content")
+                            avatar_url = raw_img.replace("/75x75/", "/originals/").replace("/140x140/", "/originals/")
+                        if og_title and og_title.get("content"):
+                            name = og_title.get("content").split("|")[0].strip()
+                        if og_desc and og_desc.get("content"):
+                            bio = og_desc.get("content").strip()
+                except Exception as e:
+                    logger.debug("Pinterest profile fetch error: %s", e)
+
+        # 7. Reddit
+        elif "reddit" in plat_lower:
+            profile_url = profile_url or f"https://www.reddit.com/user/{username}"
+            if requests:
+                try:
+                    r = requests.get(f"https://www.reddit.com/user/{username}/about.json", headers=headers, timeout=12)
+                    if r.status_code == 200:
+                        data = r.json().get("data", {})
+                        raw_icon = data.get("icon_img") or data.get("snoovatar_img")
+                        if raw_icon:
+                            avatar_url = raw_icon.split("?")[0]
+                        name = data.get("subreddit", {}).get("title") or username
+                        bio = data.get("subreddit", {}).get("public_description") or ""
+                except Exception as e:
+                    logger.debug("Reddit profile fetch error: %s", e)
+            if not avatar_url and requests and BeautifulSoup:
+                try:
+                    r = requests.get(f"https://www.reddit.com/user/{username}/", headers=headers, timeout=10)
+                    if r.status_code == 200:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        if og_img and og_img.get("content"):
+                            avatar_url = og_img.get("content").split("?")[0]
+                except Exception:
+                    pass
+
+        # 8. TikTok
+        elif "tiktok" in plat_lower:
+            profile_url = profile_url or f"https://www.tiktok.com/@{username}"
+            client = cffi_requests if cffi_requests else requests
+            kwargs = {"impersonate": "chrome124"} if cffi_requests else {}
+            if client:
+                try:
+                    r = client.get(profile_url, headers=headers, timeout=12, **kwargs)
+                    if r.status_code == 200 and BeautifulSoup:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        og_title = soup.find("meta", property="og:title")
+                        og_desc = soup.find("meta", property="og:description")
+                        if og_img and og_img.get("content"):
+                            avatar_url = og_img.get("content")
+                        if og_title and og_title.get("content"):
+                            name = og_title.get("content").split("•")[0].strip()
+                        if og_desc and og_desc.get("content"):
+                            bio = og_desc.get("content").strip()
+                except Exception as e:
+                    logger.debug("TikTok profile fetch error: %s", e)
+
+        # 9. Threads
+        elif "threads" in plat_lower:
+            profile_url = profile_url or f"https://www.threads.net/@{username}"
+            client = cffi_requests if cffi_requests else requests
+            kwargs = {"impersonate": "chrome124"} if cffi_requests else {}
+            if client:
+                try:
+                    r = client.get(profile_url, headers=headers, timeout=12, **kwargs)
+                    if r.status_code == 200 and BeautifulSoup:
+                        soup = BeautifulSoup(r.text, "html.parser")
+                        og_img = soup.find("meta", property="og:image")
+                        og_title = soup.find("meta", property="og:title")
+                        og_desc = soup.find("meta", property="og:description")
+                        if og_img and og_img.get("content"):
+                            avatar_url = og_img.get("content")
+                        if og_title and og_title.get("content"):
+                            name = og_title.get("content").split("•")[0].strip()
+                        if og_desc and og_desc.get("content"):
+                            bio = og_desc.get("content").strip()
+                except Exception as e:
+                    logger.debug("Threads profile fetch error: %s", e)
+
+        # 10. Generic Webpage fallback
+        if not avatar_url and profile_url and requests and BeautifulSoup:
+            try:
+                r = requests.get(profile_url, headers=headers, timeout=10)
+                if r.status_code == 200:
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    og_img = (
+                        soup.find("meta", property="og:image")
+                        or soup.find("meta", property="twitter:image")
+                        or soup.find("link", rel="apple-touch-icon")
+                    )
+                    if og_img:
+                        avatar_url = og_img.get("content") or og_img.get("href")
+                    og_title = soup.find("meta", property="og:title") or soup.find("title")
+                    if og_title:
+                        name = (og_title.get("content") or og_title.text or "").strip()
+            except Exception:
+                pass
+
+        if not avatar_url:
+            raise DownloaderError(
+                f"Could not retrieve profile picture for @{username} on {platform}. "
+                "The account may be private, restricted, or does not exist."
+            )
+
+        # Download the avatar image file
+        client = cffi_requests if cffi_requests else requests
+        kwargs = {"impersonate": "chrome124"} if cffi_requests else {}
+        try:
+            img_r = client.get(avatar_url, headers=headers, timeout=18, **kwargs)
+            if img_r.status_code != 200 or not img_r.content:
+                raise DownloaderError(f"Failed to download image data from profile CDN (status {img_r.status_code}).")
+        except Exception as e:
+            raise DownloaderError(f"Error downloading profile avatar: {e}")
+
+        # Determine extension from content-type or magic bytes
+        c_type = (img_r.headers.get("content-type") or "").lower()
+        content = img_r.content
+        if "png" in c_type or content.startswith(b"\x89PNG"):
+            ext = ".png"
+        elif "webp" in c_type or (content.startswith(b"RIFF") and b"WEBP" in content[:16]):
+            ext = ".webp"
+        elif "gif" in c_type or content.startswith(b"GIF8"):
+            ext = ".gif"
+        else:
+            ext = ".jpg"
+
+        out_file = temp_dir / f"{username}_profile{ext}"
+        with open(out_file, "wb") as f:
+            f.write(content)
+
+        valid_file = sanitize_image_file(out_file) or out_file
+        mb = valid_file.stat().st_size / (1024 * 1024)
+
+        return {
+            "type": "photo",
+            "file_path": valid_file,
+            "file_paths": [valid_file],
+            "dir_path": temp_dir,
+            "title": f"{name} (@{username})",
+            "name": name,
+            "username": username,
+            "platform": platform,
+            "bio": bio[:300] if bio else "",
+            "profile_url": profile_url or f"https://{platform.lower()}.com/{username}",
+            "duration": 0,
+            "thumbnail": avatar_url,
+            "filesize_mb": mb,
+            "is_profile": True,
+        }
+
+    async def download_profile(
+        self,
+        platform: str,
+        username: str,
+        profile_url: str = "",
+    ) -> Dict[str, Any]:
+        """Download profile picture asynchronously."""
+        temp_dir = Path(tempfile.mkdtemp(dir=str(self.download_dir)))
+        return await asyncio.to_thread(self._download_profile_avatar, platform, username, profile_url, temp_dir)
+
     def _download_direct_image(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """Download a direct image file (.jpg, .png, .webp, etc.)."""
         if not requests:
@@ -3596,6 +4124,13 @@ class MediaDownloader:
             url = resolve_reddit_url(url)
 
         try:
+            # Profile & Avatar links (Instagram, GitHub, Telegram, X/Twitter, YouTube, TikTok, Reddit, Pinterest, Threads)
+            if is_profile_url(url):
+                parsed = parse_profile_input(url)
+                if parsed:
+                    plat, u_name, c_url = parsed
+                    return await asyncio.to_thread(self._download_profile_avatar, plat, u_name, c_url or url, temp_dir)
+
             # Direct image links (.jpg, .png, .webp, i.redd.it, imgur, etc.)
             clean_u = url.split("?")[0].lower()
             host = _get_url_host(url)
