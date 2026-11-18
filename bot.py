@@ -586,11 +586,14 @@ def get_media_post_keyboard(vid_session_id: Optional[str] = None) -> Optional[In
         rows.append([
             InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
         ])
-    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
-        rows.append([
-            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
-            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
-        ])
+    if config.PROMO_CHANNELS_ENABLED:
+        promo_row = []
+        if config.MOD_APK_CHANNEL:
+            promo_row.append(InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL))
+        if config.WALLPAPER_CHANNEL:
+            promo_row.append(InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL))
+        if promo_row:
+            rows.append(promo_row)
     return InlineKeyboardMarkup(rows) if rows else None
 
 
@@ -670,7 +673,7 @@ async def execute_download(
                         f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
                         f"▫️ <b>Size:</b> {filesize_mb:.1f} MB"
                     )
-                    photo_keyboard = get_media_post_keyboard()
+                    photo_keyboard = get_media_post_keyboard(vid_session_id if is_video_link else None)
 
                     with open(file_path, "rb") as f:
                         try:
@@ -721,6 +724,8 @@ async def execute_download(
                         f"▫️ <b>Items:</b> {item_count} files\n"
                         f"▫️ <b>Total Size:</b> {filesize_mb:.1f} MB"
                     )
+                    has_video_in_album = any(fp.suffix.lower() in VIDEO_EXTS for fp in file_paths)
+                    album_kb = get_media_post_keyboard(vid_session_id if (has_video_in_album or is_video_link) else None)
 
                     media = []
                     open_files = []
@@ -761,6 +766,7 @@ async def execute_download(
                                 logger.warning("send_media_group failed with %s; falling back to individual items...", e)
                                 for idx, fp in enumerate(file_paths[:10]):
                                     item_caption = caption if idx == 0 else None
+                                    is_last_item = (idx == min(len(file_paths[:10]) - 1, 9))
                                     with open(fp, "rb") as item_fh:
                                         try:
                                             if fp.suffix.lower() in VIDEO_EXTS:
@@ -769,6 +775,7 @@ async def execute_download(
                                                     video=item_fh,
                                                     caption=item_caption,
                                                     parse_mode=ParseMode.HTML,
+                                                    reply_markup=album_kb if is_last_item else None,
                                                 )
                                             else:
                                                 await context.bot.send_photo(
@@ -776,6 +783,7 @@ async def execute_download(
                                                     photo=item_fh,
                                                     caption=item_caption,
                                                     parse_mode=ParseMode.HTML,
+                                                    reply_markup=album_kb if is_last_item else None,
                                                 )
                                         except Exception:
                                             item_fh.seek(0)
@@ -783,16 +791,21 @@ async def execute_download(
                                                 chat_id=chat_id,
                                                 document=item_fh,
                                                 caption=item_caption,
+                                                reply_markup=album_kb if is_last_item else None,
                                             )
                             else:
                                 raise
 
-                        album_kb = get_media_post_keyboard()
                         if album_kb:
                             try:
                                 await context.bot.send_message(
                                     chat_id=chat_id,
-                                    text="✨ <b>Download complete!</b>",
+                                    text=(
+                                        f"✨ <b>Download complete!</b>\n\n"
+                                        f"📸 <b>{html.escape(title[:100])}</b>\n"
+                                        f"▫️ <b>Platform:</b> {html.escape(platform)} ({item_count} files)\n"
+                                        f"▫️ <b>Total Size:</b> {filesize_mb:.1f} MB"
+                                    ),
                                     reply_markup=album_kb,
                                     parse_mode=ParseMode.HTML,
                                 )
@@ -813,7 +826,9 @@ async def execute_download(
                         f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
                         f"▫️ <b>Size:</b> {filesize_mb:.1f} MB"
                     )
-                    doc_keyboard = get_media_post_keyboard()
+                    file_ext = Path(file_path).suffix.lower()
+                    is_media_file = file_ext in VIDEO_EXTS or file_ext in (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac")
+                    doc_keyboard = get_media_post_keyboard(vid_session_id if (is_video_link or is_media_file) else None)
 
                     with open(file_path, "rb") as f:
                         try:
@@ -852,17 +867,20 @@ async def execute_download(
                     if desc:
                         clean_desc = desc[:300] + ("..." if len(desc) > 300 else "")
                         caption += f"\n\n<i>{html.escape(clean_desc)}</i>"
-                    caption += f"\n\n▫️ <b>Source:</b> {html.escape(platform)}"
+                    caption += f"\n\n▫️ <b>Platform:</b> {html.escape(platform)}"
 
                     article_keyboard = None
                     article_buttons = []
                     if source_url and source_url.startswith("http"):
                         article_buttons.append([InlineKeyboardButton("📖 Read Full Article", url=source_url)])
-                    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
-                        article_buttons.append([
-                            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
-                            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
-                        ])
+                    if config.PROMO_CHANNELS_ENABLED:
+                        promo_row = []
+                        if config.MOD_APK_CHANNEL:
+                            promo_row.append(InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL))
+                        if config.WALLPAPER_CHANNEL:
+                            promo_row.append(InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL))
+                        if promo_row:
+                            article_buttons.append(promo_row)
                     if article_buttons:
                         article_keyboard = InlineKeyboardMarkup(article_buttons)
 
@@ -882,7 +900,7 @@ async def execute_download(
                             except Exception as e:
                                 if "parse entities" in str(e).lower():
                                     f.seek(0)
-                                    plain_caption = f"📰 {title[:120]}\n\n{desc[:300]}\n\n▫️ Source: {platform}"
+                                    plain_caption = f"📰 {title[:120]}\n\n{desc[:300]}\n\n▫️ Platform: {platform}"
                                     await context.bot.send_photo(
                                         chat_id=chat_id,
                                         photo=f,
@@ -939,10 +957,9 @@ async def execute_download(
                                 part_caption = (
                                     f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n\n"
                                     f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
-                                    f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB\n"
+                                    f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB\n\n"
                                     f"✂️ <i>Auto-split video delivery</i>"
                                 )
-                                is_last = (part_idx == total_parts - 1)
                                 with open(part_path, "rb") as pf:
                                     try:
                                         await context.bot.send_video(
@@ -952,7 +969,7 @@ async def execute_download(
                                             caption=part_caption,
                                             parse_mode=ParseMode.HTML,
                                             supports_streaming=True,
-                                            reply_markup=post_keyboard if is_last else None,
+                                            reply_markup=post_keyboard,
                                             read_timeout=600,
                                             write_timeout=600,
                                         )
@@ -962,7 +979,7 @@ async def execute_download(
                                             plain_part_caption = (
                                                 f"🎬 {title[:85]} (Part {part_idx + 1}/{total_parts})\n\n"
                                                 f"▫️ Platform: {platform}\n"
-                                                f"▫️ Part Size: {part_size_mb:.1f} MB\n"
+                                                f"▫️ Part Size: {part_size_mb:.1f} MB\n\n"
                                                 f"Auto-split video delivery"
                                             )
                                             await context.bot.send_video(
@@ -971,7 +988,7 @@ async def execute_download(
                                                 thumbnail=thumb_handle,
                                                 caption=plain_part_caption,
                                                 supports_streaming=True,
-                                                reply_markup=post_keyboard if is_last else None,
+                                                reply_markup=post_keyboard,
                                                 read_timeout=600,
                                                 write_timeout=600,
                                             )
@@ -1125,6 +1142,7 @@ async def execute_download(
 
                 caption = (
                     f"🎵 <b>{html.escape(title[:100])}</b>\n\n"
+                    f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
                     f"▫️ <b>Format:</b> MP3 (192 kbps)\n"
                     f"▫️ <b>Size:</b> {filesize_mb:.1f} MB{dur_line}"
                 )
@@ -1151,6 +1169,7 @@ async def execute_download(
                             thumb_handle.seek(0)
                         plain_caption = (
                             f"🎵 {title[:100]}\n\n"
+                            f"▫️ Platform: {platform}\n"
                             f"▫️ Format: MP3 (192 kbps)\n"
                             f"▫️ Size: {filesize_mb:.1f} MB{plain_dur_line}"
                         )
@@ -1270,7 +1289,8 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         return
 
     data = query.data
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id if user else 0
 
     # Handle membership verification before the normal auth gate.
     if data == "check_membership":

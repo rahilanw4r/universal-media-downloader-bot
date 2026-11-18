@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 from pathlib import Path
 from downloader import (
     find_urls,
@@ -402,9 +403,29 @@ class TestDownloader(unittest.TestCase):
             self.assertEqual(kb_no_vid.inline_keyboard[0][0].url, "https://t.me/ModRepository")
             self.assertEqual(kb_no_vid.inline_keyboard[0][1].url, "https://t.me/WallpapersRepository")
 
-            # Verify command handlers are defined and callable
-            self.assertTrue(callable(bot.modapk_command))
-            self.assertTrue(callable(bot.wallpaper_command))
+            # Verify clean promo keyboard without promotional text in captions
+            self.assertEqual(bot.get_promo_caption_footer(), "")
+
+            # Test single-channel configurations
+            with mock.patch("config.MOD_APK_CHANNEL", ""):
+                kb_only_wall = bot.get_media_post_keyboard()
+                self.assertIsNotNone(kb_only_wall)
+                self.assertEqual(len(kb_only_wall.inline_keyboard[0]), 1)
+                self.assertEqual(kb_only_wall.inline_keyboard[0][0].text, "🖼️ Wallpapers")
+
+            with mock.patch("config.WALLPAPER_CHANNEL", ""):
+                kb_only_mod = bot.get_media_post_keyboard()
+                self.assertIsNotNone(kb_only_mod)
+                self.assertEqual(len(kb_only_mod.inline_keyboard[0]), 1)
+                self.assertEqual(kb_only_mod.inline_keyboard[0][0].text, "📱 Mod APKs")
+
+            # Test disabled promo
+            with mock.patch("config.PROMO_CHANNELS_ENABLED", False):
+                self.assertIsNone(bot.get_media_post_keyboard())
+                kb_audio_only = bot.get_media_post_keyboard(vid_session_id="vid123")
+                self.assertIsNotNone(kb_audio_only)
+                self.assertEqual(len(kb_audio_only.inline_keyboard), 1)
+                self.assertEqual(kb_audio_only.inline_keyboard[0][0].callback_data, "dl:aud:vid123")
         except ModuleNotFoundError as e:
             if "telegram" in str(e):
                 self.skipTest("python-telegram-bot not installed in test environment")
