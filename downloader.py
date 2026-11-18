@@ -392,6 +392,26 @@ def is_instagram_url(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in ("instagram.com", "instagr.am"))
 
 
+def extract_instagram_shortcode(url: str) -> Optional[str]:
+    """Extract standard Instagram post/reel/tv shortcode from any URL format."""
+    if not url:
+        return None
+    clean = re.sub(r"[?#].*$", "", url.strip()).rstrip("/")
+    m = re.search(
+        r"(?:instagram\.com|instagr\.am)/(?:(?:share/)?(?:[a-zA-Z0-9_.-]+/)?|)(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)",
+        url,
+    )
+    if m:
+        return m.group(1)
+    parts = [p for p in clean.split("/") if p]
+    for i, seg in enumerate(parts):
+        if seg.lower() in ("p", "reel", "reels", "tv") and i + 1 < len(parts):
+            cand = parts[i + 1]
+            if re.match(r"^[A-Za-z0-9_-]+$", cand):
+                return cand
+    return None
+
+
 def is_tiktok_url(url: str) -> bool:
     """Check if URL belongs to TikTok."""
     host = _get_url_host(url)
@@ -657,6 +677,12 @@ class MediaDownloader:
         if use_cookies and self._is_valid_cookie_file(cookie_file):
             opts["cookiefile"] = str(cookie_file)
             has_cookies = True
+
+        try:
+            from yt_dlp.networking.impersonate import ImpersonateTarget
+            opts["impersonate"] = ImpersonateTarget.from_str("chrome")
+        except Exception:
+            pass
 
         opts["extractor_args"] = {
             "instagram": {
@@ -1841,19 +1867,20 @@ class MediaDownloader:
         Download Instagram posts (single photos, multi-image carousels, mixed albums, or reels)
         using multi-strategy extraction:
         1. Instaloader engine (with session cookies if available)
-        2. gallery-dl engine (with session cookies if available)
-        3. Instagram public oEmbed API
-        4. Logged-out GraphQL Polaris query
+        2. gallery-dl engine (with canonical URL and session cookies if available)
+        3. yt-dlp with TLS browser impersonation
+        4. Logged-out GraphQL Polaris query with live LSD token & session cookies
+        5. Embed page & OpenGraph meta tag extractor (with mirror fallbacks)
+        6. Instagram public oEmbed API
         """
         if not requests:
             return None
 
-        m = re.search(r"instagram\.com/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url) or re.search(
-            r"instagr\.am/(?:p|reel|reels)/([A-Za-z0-9_-]+)", url
-        )
-        if not m:
+        shortcode = extract_instagram_shortcode(url)
+        if not shortcode:
             return None
-        shortcode = m.group(1)
+
+        canonical_url = f"https://www.instagram.com/p/{shortcode}/"
 
         headers = {
             "User-Agent": (
@@ -1937,19 +1964,253 @@ class MediaDownloader:
             except Exception as e:
                 logger.debug("Instaloader extraction failed for %s: %s", shortcode, e)
 
-        # Strategy 2: gallery-dl engine
+        # Strategy 2: gallery-dl engine with canonical clean URL
         try:
-            gdl_res = self._download_gallery_dl(url, temp_dir)
+            gdl_res = self._download_gallery_dl(canonical_url, temp_dir)
             if gdl_res:
                 return gdl_res
         except Exception as e:
             logger.debug("gallery-dl instagram extraction failed for %s: %s", shortcode, e)
 
-        # Strategy 3: Official Instagram public oEmbed API (photo posts only, not video reels)
+        # Strategy 3: yt-dlp with TLS browser impersonation
+        try:
+            ydl_opts = self._get_ydl_base_opts(use_cookies=True)
+            ydl_opts.update({
+                "paths": {"home": temp_dir.as_posix()},
+                "outtmpl": {"default": "%(id).30s.%(ext)s"},
+                "format": "best",
+            })
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(canonical_url, download=True)
+            files = [f for f in temp_dir.glob("*") if f.is_file()]
+            vid_files = [f for f in files if f.suffix.lower() in VIDEO_EXTS]
+            img_files = [f for f in files if f.suffix.lower() in IMAGE_EXTS]
+            if vid_files:
+                target = vid_files[0]
+                mb = target.stat().st_size / (1024 * 1024)
+                thumb_file = self._extract_video_thumbnail(target, temp_dir)
+                return {
+                    "type": "video",
+                    "file_path": target,
+                    "file_paths": [target],
+                    "dir_path": temp_dir,
+                    "title": (info or {}).get("title") or "Instagram Video",
+                    "uploader": (info or {}).get("uploader") or "Instagram",
+                    "duration": int((info or {}).get("duration") or 0),
+                    "thumbnail": (info or {}).get("thumbnail"),
+                    "thumb_file": thumb_file,
+                    "filesize_mb": mb,
+                }
+            elif img_files:
+                target = img_files[0]
+                valid_img = sanitize_image_file(target)
+                if valid_img:
+                    mb = valid_img.stat().st_size / (1024 * 1024)
+                    return {
+                        "type": "photo",
+                        "file_path": valid_img,
+                        "file_paths": [valid_img],
+                        "dir_path": temp_dir,
+                        "title": (info or {}).get("title") or "Instagram Photo",
+                        "uploader": (info or {}).get("uploader") or "Instagram",
+                        "duration": 0,
+                        "thumbnail": None,
+                        "filesize_mb": mb,
+                    }
+        except Exception as e:
+            logger.debug("yt-dlp instagram direct extraction failed for %s: %s", shortcode, e)
+
+        # Strategy 4: Logged-out GraphQL Polaris query with live LSD token & session cookies
+        try:
+            sess = requests.Session()
+            sess.headers.update(headers)
+            r_init = sess.get("https://www.instagram.com/", timeout=8)
+            lsd_match = (
+                re.search(r'\["LSD",\[\],\{"token":"([^"]+)"', r_init.text)
+                or re.search(r'"LSD",\[\],\{"token":"([^"]+)"', r_init.text)
+                or re.search(r'name="lsd"\s+value="([^"]+)"', r_init.text)
+            )
+            lsd = lsd_match.group(1) if lsd_match else secrets.token_hex(12)
+
+            for doc_id in ("27130156389949648", "27128499623469141"):
+                variables = {
+                    "shortcode": shortcode,
+                    "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": False,
+                }
+                gql_data = {
+                    "variables": json.dumps(variables, separators=(",", ":")),
+                    "doc_id": doc_id,
+                    "server_timestamps": "true",
+                    "lsd": lsd,
+                }
+                gql_headers = {
+                    **headers,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Fb-Friendly-Name": "PolarisLoggedOutDesktopWWWPostRootContentQuery",
+                    "X-Fb-Lsd": lsd,
+                    "X-IG-App-ID": "936619743392459",
+                    "X-ASBD-ID": "129477",
+                    "X-CSRFToken": sess.cookies.get("csrftoken", ""),
+                }
+                gr = sess.post("https://www.instagram.com/graphql/query/", data=gql_data, headers=gql_headers, timeout=10)
+                if gr.status_code == 200 and gr.headers.get("content-type", "").startswith("application/json"):
+                    gdata = gr.json()
+                    media_data = gdata.get("data", {}).get("xdt_shortcode_media") or gdata.get("data", {}).get("shortcode_media")
+                    if media_data:
+                        caption = (((media_data.get("edge_media_to_caption") or {}).get("edges") or [{}])[0].get("node") or {}).get("text") or "Instagram Post"
+                        author = (media_data.get("owner") or {}).get("username") or "Instagram"
+                        edges = (media_data.get("edge_sidecar_to_children") or {}).get("edges") or []
+                        items_to_download = []
+                        if edges:
+                            for edge in edges[:10]:
+                                node = edge.get("node") or {}
+                                if node.get("is_video") and node.get("video_url"):
+                                    items_to_download.append(("video", node.get("video_url")))
+                                elif node.get("display_url"):
+                                    items_to_download.append(("photo", node.get("display_url")))
+                        else:
+                            if media_data.get("is_video") and media_data.get("video_url"):
+                                items_to_download.append(("video", media_data.get("video_url")))
+                            elif media_data.get("display_url"):
+                                items_to_download.append(("photo", media_data.get("display_url")))
+
+                        downloaded: List[Path] = []
+                        for idx, (m_type, m_url) in enumerate(items_to_download):
+                            ext = ".mp4" if m_type == "video" else ".jpg"
+                            fpath = temp_dir / f"ig_gql_{shortcode}_{idx}{ext}"
+                            r_dl = sess.get(m_url, headers=headers, stream=(m_type == "video"), timeout=25)
+                            if r_dl.status_code == 200:
+                                with open(fpath, "wb") as f:
+                                    for chunk in r_dl.iter_content(65536):
+                                        f.write(chunk)
+                                if m_type == "video":
+                                    downloaded.append(fpath)
+                                else:
+                                    v_img = sanitize_image_file(fpath)
+                                    if v_img:
+                                        downloaded.append(v_img)
+
+                        if downloaded:
+                            if len(downloaded) == 1:
+                                target = downloaded[0]
+                                mb = target.stat().st_size / (1024 * 1024)
+                                is_vid = target.suffix.lower() in VIDEO_EXTS
+                                thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_vid else None
+                                return {
+                                    "type": "video" if is_vid else "photo",
+                                    "file_path": target,
+                                    "file_paths": [target],
+                                    "dir_path": temp_dir,
+                                    "title": caption,
+                                    "uploader": author,
+                                    "duration": 0,
+                                    "thumbnail": None,
+                                    "thumb_file": thumb_file,
+                                    "filesize_mb": mb,
+                                }
+                            else:
+                                mb = sum(f.stat().st_size for f in downloaded) / (1024 * 1024)
+                                return {
+                                    "type": "album",
+                                    "file_path": downloaded[0],
+                                    "file_paths": downloaded,
+                                    "dir_path": temp_dir,
+                                    "title": caption,
+                                    "uploader": author,
+                                    "duration": 0,
+                                    "thumbnail": None,
+                                    "filesize_mb": mb,
+                                }
+        except Exception as e:
+            logger.debug("Instagram GraphQL fallback failed for %s: %s", shortcode, e)
+
+        # Strategy 5: OpenGraph & Embed extraction (handles photo & video posts)
+        try:
+            embed_candidates = [
+                f"https://www.instagram.com/p/{shortcode}/embed/captioned/",
+                f"https://eeinstagram.com/p/{shortcode}/",
+            ]
+            for embed_url in embed_candidates:
+                try:
+                    r_emb = requests.get(embed_url, headers=headers, timeout=10)
+                    if r_emb.status_code == 200 and len(r_emb.text) > 200:
+                        soup = BeautifulSoup(r_emb.text, "html.parser") if BeautifulSoup else None
+                        og_vid = None
+                        og_img = None
+                        og_title = "Instagram Post"
+
+                        if soup:
+                            v_tag = soup.find("meta", property="og:video") or soup.find("meta", property="og:video:secure_url")
+                            if v_tag and v_tag.get("content"):
+                                og_vid = v_tag["content"]
+                            i_tag = soup.find("meta", property="og:image") or soup.find("meta", property="og:image:secure_url")
+                            if i_tag and i_tag.get("content") and "static.cdninstagram.com" not in i_tag["content"]:
+                                og_img = i_tag["content"]
+                            t_tag = soup.find("meta", property="og:title")
+                            if t_tag and t_tag.get("content"):
+                                og_title = t_tag["content"]
+
+                        if not og_vid:
+                            vid_match = re.search(r'property="og:video(?::secure_url)?"\s+content="([^"]+)"', r_emb.text)
+                            if vid_match:
+                                og_vid = vid_match.group(1)
+                        if not og_img:
+                            img_match = re.search(r'property="og:image(?::secure_url)?"\s+content="([^"]+)"', r_emb.text)
+                            if img_match and "static.cdninstagram.com" not in img_match.group(1):
+                                og_img = img_match.group(1)
+
+                        if og_vid:
+                            fpath = temp_dir / f"ig_emb_{shortcode}.mp4"
+                            r_v = requests.get(og_vid, headers=headers, stream=True, timeout=25)
+                            if r_v.status_code == 200:
+                                with open(fpath, "wb") as f:
+                                    for chunk in r_v.iter_content(65536):
+                                        f.write(chunk)
+                                if fpath.stat().st_size > 1024:
+                                    mb = fpath.stat().st_size / (1024 * 1024)
+                                    thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
+                                    return {
+                                        "type": "video",
+                                        "file_path": fpath,
+                                        "file_paths": [fpath],
+                                        "dir_path": temp_dir,
+                                        "title": og_title,
+                                        "uploader": "Instagram",
+                                        "duration": 0,
+                                        "thumbnail": None,
+                                        "thumb_file": thumb_file,
+                                        "filesize_mb": mb,
+                                    }
+                        elif og_img:
+                            fpath = temp_dir / f"ig_emb_{shortcode}.jpg"
+                            r_i = requests.get(og_img, headers=headers, timeout=20)
+                            if r_i.status_code == 200 and r_i.content:
+                                with open(fpath, "wb") as f:
+                                    f.write(r_i.content)
+                                valid_img = sanitize_image_file(fpath)
+                                if valid_img:
+                                    mb = valid_img.stat().st_size / (1024 * 1024)
+                                    return {
+                                        "type": "photo",
+                                        "file_path": valid_img,
+                                        "file_paths": [valid_img],
+                                        "dir_path": temp_dir,
+                                        "title": og_title,
+                                        "uploader": "Instagram",
+                                        "duration": 0,
+                                        "thumbnail": None,
+                                        "filesize_mb": mb,
+                                    }
+                except Exception as e_emb:
+                    logger.debug("Embed candidate %s failed: %s", embed_url, e_emb)
+        except Exception as e:
+            logger.debug("OpenGraph embed extraction failed for %s: %s", shortcode, e)
+
+        # Strategy 6: Official Instagram public oEmbed API
         is_reel_link = any(p in url.lower() for p in ("/reel/", "/reels/", "/tv/"))
         if not is_reel_link:
             try:
-                oembed_url = f"https://www.instagram.com/api/v1/oembed/?url=https://www.instagram.com/p/{shortcode}/"
+                oembed_url = f"https://www.instagram.com/api/v1/oembed/?url={canonical_url}"
                 r = requests.get(oembed_url, headers=headers, timeout=12)
                 if r.status_code == 200:
                     data = r.json()
@@ -1978,98 +2239,6 @@ class MediaDownloader:
                                 }
             except Exception as e:
                 logger.debug("Instagram oEmbed API failed for %s: %s", shortcode, e)
-
-        # Strategy 4: Logged-out GraphQL Polaris query
-        try:
-            variables = {
-                "shortcode": shortcode,
-                "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": False,
-            }
-            lsd = secrets.token_hex(12)
-            gql_data = {
-                "variables": json.dumps(variables, separators=(",", ":")),
-                "doc_id": "27128499623469141",
-                "server_timestamps": "true",
-                "lsd": lsd,
-            }
-            gql_headers = {
-                **headers,
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-Fb-Friendly-Name": "PolarisPostRootQuery",
-                "X-Fb-Lsd": lsd,
-                "X-IG-App-ID": "936619743392459",
-            }
-            gr = requests.post("https://www.instagram.com/graphql/query/", data=gql_data, headers=gql_headers, timeout=12)
-            if gr.status_code == 200 and gr.headers.get("content-type", "").startswith("application/json"):
-                gdata = gr.json()
-                media_data = gdata.get("data", {}).get("xdt_shortcode_media") or gdata.get("data", {}).get("shortcode_media")
-                if media_data:
-                    caption = (((media_data.get("edge_media_to_caption") or {}).get("edges") or [{}])[0].get("node") or {}).get("text") or "Instagram Post"
-                    author = (media_data.get("owner") or {}).get("username") or "Instagram"
-                    edges = (media_data.get("edge_sidecar_to_children") or {}).get("edges") or []
-                    items_to_download = []
-                    if edges:
-                        for edge in edges[:10]:
-                            node = edge.get("node") or {}
-                            if node.get("is_video") and node.get("video_url"):
-                                items_to_download.append(("video", node.get("video_url")))
-                            elif node.get("display_url"):
-                                items_to_download.append(("photo", node.get("display_url")))
-                    else:
-                        if media_data.get("is_video") and media_data.get("video_url"):
-                            items_to_download.append(("video", media_data.get("video_url")))
-                        elif media_data.get("display_url"):
-                            items_to_download.append(("photo", media_data.get("display_url")))
-
-                    downloaded: List[Path] = []
-                    for idx, (m_type, m_url) in enumerate(items_to_download):
-                        ext = ".mp4" if m_type == "video" else ".jpg"
-                        fpath = temp_dir / f"ig_gql_{shortcode}_{idx}{ext}"
-                        r_dl = requests.get(m_url, headers=headers, stream=(m_type == "video"), timeout=25)
-                        if r_dl.status_code == 200:
-                            with open(fpath, "wb") as f:
-                                for chunk in r_dl.iter_content(65536):
-                                    f.write(chunk)
-                            if m_type == "video":
-                                downloaded.append(fpath)
-                            else:
-                                v_img = sanitize_image_file(fpath)
-                                if v_img:
-                                    downloaded.append(v_img)
-
-                    if downloaded:
-                        if len(downloaded) == 1:
-                            target = downloaded[0]
-                            mb = target.stat().st_size / (1024 * 1024)
-                            is_vid = target.suffix.lower() in VIDEO_EXTS
-                            thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_vid else None
-                            return {
-                                "type": "video" if is_vid else "photo",
-                                "file_path": target,
-                                "file_paths": [target],
-                                "dir_path": temp_dir,
-                                "title": caption,
-                                "uploader": author,
-                                "duration": 0,
-                                "thumbnail": None,
-                                "thumb_file": thumb_file,
-                                "filesize_mb": mb,
-                            }
-                        else:
-                            mb = sum(f.stat().st_size for f in downloaded) / (1024 * 1024)
-                            return {
-                                "type": "album",
-                                "file_path": downloaded[0],
-                                "file_paths": downloaded,
-                                "dir_path": temp_dir,
-                                "title": caption,
-                                "uploader": author,
-                                "duration": 0,
-                                "thumbnail": None,
-                                "filesize_mb": mb,
-                            }
-        except Exception as e:
-            logger.debug("Instagram GraphQL fallback failed for %s: %s", shortcode, e)
 
         return None
 
@@ -3525,6 +3694,13 @@ class MediaDownloader:
                     art_res = await asyncio.to_thread(self._extract_webpage_article, url, temp_dir)
                     if art_res:
                         return art_res
+
+                if is_instagram_url(url):
+                    raise DownloaderError(
+                        "Instagram requires authentication or an active session to access this post. "
+                        "Please export your cookies using the 'Get cookies.txt LOCALLY' browser extension "
+                        "and upload them using /cookies, or configure INSTAGRAM_COOKIES in .env."
+                    )
 
                 raise DownloaderError(f"Download failed: {ytdl_err}")
 

@@ -1051,7 +1051,15 @@ async def execute_download(
             except DownloaderError as e:
                 logger.error(f"Download error: {e}")
                 raw_err = str(e)
-                if platform != "Reddit" and any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot", "ndus", "appicrypt", "terabox links require", "diskwala links are protected")):
+                if platform == "Instagram" and any(x in raw_err.lower() for x in ("requires authentication", "empty media response", "api is not granting access", "redirect to login", "login", "sign in", "unauthorized", "checkpoint", "require_login", "rate limit")):
+                    help_note = (
+                        "\n\n💡 <b>Instagram Authentication Notice:</b>\n"
+                        "Instagram requires an active account session to access this post from automated servers.\n\n"
+                        "<b>How to enable Instagram downloads:</b>\n"
+                        "1. Export your Instagram cookies using the <b>Get cookies.txt LOCALLY</b> browser extension.\n"
+                        "2. Send the <code>cookies.txt</code> file directly in chat or use <code>/cookies</code> (or set <code>INSTAGRAM_COOKIES</code> in <code>.env</code>)."
+                    )
+                elif platform != "Reddit" and any(x in raw_err.lower() for x in ("login required", "sign in", "bot detection", "confirm you're not a bot", "ndus", "appicrypt", "terabox links require", "diskwala links are protected")):
                     help_note = (
                         "\n\n💡 <b>Configuration / Auth Notice:</b> This platform requires a valid session or API key. "
                         f"Admin can upload an updated <code>cookies.txt</code> using <code>/cookies</code> or configure credentials in <code>.env</code>."

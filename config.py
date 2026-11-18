@@ -195,7 +195,16 @@ def reload_cookies() -> Optional[Path]:
     except Exception:
         pass
 
-    _cookies_content = os.getenv("COOKIES_CONTENT", "").strip() or os.getenv("YOUTUBE_COOKIES", "").strip()
+    cookie_parts = []
+    for var in ("COOKIES_CONTENT", "YOUTUBE_COOKIES", "INSTAGRAM_COOKIES"):
+        val = os.getenv(var, "").strip()
+        if val:
+            cookie_parts.append(val)
+    ig_sess = os.getenv("INSTAGRAM_SESSION_ID", "").strip()
+    if ig_sess:
+        cookie_parts.append(f"sessionid={ig_sess}")
+
+    _cookies_content = "\n".join(cookie_parts)
     _cookies_env = os.getenv("COOKIES_FILE", "").strip()
 
     if _cookies_content:

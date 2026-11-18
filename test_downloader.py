@@ -8,6 +8,7 @@ from downloader import (
     resolve_pinterest_url,
     is_twitter_url,
     is_instagram_url,
+    extract_instagram_shortcode,
     is_tiktok_url,
     is_terabox_url,
     extract_terabox_surl,
@@ -116,6 +117,18 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_tiktok_url("https://vm.tiktok.com/ZM12345/"))
         self.assertTrue(is_tiktok_url("https://vt.tiktok.com/ZS12345/"))
         self.assertFalse(is_tiktok_url("https://youtube.com/watch?v=123"))
+
+    def test_extract_instagram_shortcode(self):
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/p/C-5oIqKx0Xh/"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/p/C-5oIqKx0Xh?igsh=MWQ1ZGUxMzBkMA=="), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/reel/C-5oIqKx0Xh/?utm_source=ig_web"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/reels/C-5oIqKx0Xh"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/share/p/C-5oIqKx0Xh/?igsh=123"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/share/reel/C-5oIqKx0Xh/"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/tv/C-5oIqKx0Xh/"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://www.instagram.com/username/p/C-5oIqKx0Xh/"), "C-5oIqKx0Xh")
+        self.assertEqual(extract_instagram_shortcode("https://instagr.am/p/C-5oIqKx0Xh/"), "C-5oIqKx0Xh")
+        self.assertIsNone(extract_instagram_shortcode("https://youtube.com/watch?v=123"))
 
     def test_diskwala_helpers(self):
         self.assertTrue(is_diskwala_url("https://diskwala.com/app/66fd54e2abc"))
