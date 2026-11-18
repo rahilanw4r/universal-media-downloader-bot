@@ -3,9 +3,11 @@ import sys
 import html
 import time
 import uuid
+import socket
 import asyncio
 import logging
 import threading
+from urllib.parse import urlparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -1926,7 +1928,18 @@ def start_health_server():
 def main():
     """Start the Telegram Downloader Bot."""
     if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
-        print("❌ Error: TELEGRAM_BOT_TOKEN is not set in .env!")
+        print("\n" + "=" * 60)
+        print("❌ Error: TELEGRAM_BOT_TOKEN is not configured in .env!")
+        print("=" * 60)
+        print("To run the bot:")
+        print("1. Open Telegram and message @BotFather")
+        print("2. Send /newbot to create a new bot and copy the API Token")
+        print("3. Open .env in your project and replace:")
+        print("   TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here")
+        print("   with your actual bot token, e.g.:")
+        print("   TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ")
+        print("4. Restart the bot: python3 bot.py")
+        print("=" * 60 + "\n")
         return
 
     # Start health check server for cloud hosting platforms (Render, Koyeb, etc.)
@@ -1944,17 +1957,32 @@ def main():
     )
 
     if config.LOCAL_BOT_API_URL:
-        base_url = config.LOCAL_BOT_API_URL.rstrip("/")
-        if not base_url.endswith("/bot"):
-            bot_base = f"{base_url}/bot"
-            file_base = f"{base_url}/file/bot"
+        # Verify local server is reachable before binding
+        local_healthy = False
+        parsed_u = urlparse(config.LOCAL_BOT_API_URL)
+        host = parsed_u.hostname or "localhost"
+        port = parsed_u.port or 8081
+        try:
+            with socket.create_connection((host, port), timeout=1.5):
+                local_healthy = True
+        except Exception:
+            local_healthy = False
+
+        if local_healthy:
+            base_url = config.LOCAL_BOT_API_URL.rstrip("/")
+            if not base_url.endswith("/bot"):
+                bot_base = f"{base_url}/bot"
+                file_base = f"{base_url}/file/bot"
+            else:
+                bot_base = base_url
+                file_base = base_url.replace("/bot", "/file/bot")
+            builder = builder.base_url(bot_base).base_file_url(file_base)
+            if config.LOCAL_BOT_API_LOCAL_MODE:
+                builder = builder.local_mode(True)
+            print(f"🌐 Local Bot API Server active: {bot_base} (Max file size: {config.MAX_FILE_SIZE_MB:.0f} MB, local_mode={config.LOCAL_BOT_API_LOCAL_MODE})")
         else:
-            bot_base = base_url
-            file_base = base_url.replace("/bot", "/file/bot")
-        builder = builder.base_url(bot_base).base_file_url(file_base)
-        if config.LOCAL_BOT_API_LOCAL_MODE:
-            builder = builder.local_mode(True)
-        print(f"🌐 Local Bot API Server active: {bot_base} (Max file size: {config.MAX_FILE_SIZE_MB:.0f} MB, local_mode={config.LOCAL_BOT_API_LOCAL_MODE})")
+            print(f"⚠️ Warning: LOCAL_BOT_API_URL ({config.LOCAL_BOT_API_URL}) is not running on {host}:{port}.")
+            print(f"☁️ Automatically falling back to Cloud Telegram API (Standard 50 MB upload limit).")
     else:
         print(f"☁️ Cloud Telegram API active (Standard {config.MAX_FILE_SIZE_MB:.0f} MB upload limit).")
 

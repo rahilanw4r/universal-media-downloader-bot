@@ -202,10 +202,20 @@ IMAGE_HOST_DOMAINS = {
 
 
 def find_urls(text: str) -> List[str]:
-    """Extract all URLs from a given message text."""
+    """Extract all URLs from a given message text, including scheme-less domain links."""
     if not text:
         return []
-    return URL_REGEX.findall(text)
+    urls = URL_REGEX.findall(text)
+    if not urls:
+        # Check for naked domain-based URLs (e.g. instagram.com/..., t.me/..., etc.)
+        naked_regex = re.compile(
+            r"(?:^|\s)((?:[a-zA-Z0-9-]+\.)+(?:com|net|org|me|be|cc|tv|co|io|in|app)/[^\s]+)",
+            re.IGNORECASE,
+        )
+        for m in naked_regex.finditer(text):
+            candidate = m.group(1).strip()
+            urls.append("https://" + candidate)
+    return urls
 
 
 def _get_url_host(url: str) -> str:
@@ -279,7 +289,7 @@ def _format_canonical_profile_tuple(platform: str, username: str) -> Tuple[str, 
 
 def parse_profile_input(text: str) -> Optional[Tuple[str, str, str]]:
     """
-    Parse a profile URL, platform:username identifier, or @handle into:
+    Parse a profile URL, platform:username identifier, naked domain link, or @handle into:
     (Platform, Username, CanonicalProfileURL).
     Supports Instagram, TikTok, X (Twitter), GitHub, Telegram, YouTube, Reddit, Pinterest, and Threads.
     """
@@ -287,8 +297,17 @@ def parse_profile_input(text: str) -> Optional[Tuple[str, str, str]]:
         return None
     raw = text.strip()
 
+    # Check for naked domain links like t.me/durov or instagram.com/cristiano
+    known_domains = (
+        "instagram.com", "instagr.am", "tiktok.com", "twitter.com",
+        "x.com", "github.com", "t.me", "telegram.me", "youtube.com",
+        "youtu.be", "reddit.com", "pinterest.com", "threads.net"
+    )
+    first_segment = raw.split("/")[0].lower()
+    is_domain_url = any(first_segment == d or first_segment.endswith("." + d) for d in known_domains)
+
     # 1. URL pattern parsing
-    if raw.startswith("http://") or raw.startswith("https://") or "://" in raw or raw.startswith("www."):
+    if raw.startswith(("http://", "https://", "www.")) or "://" in raw or is_domain_url:
         u = raw if "://" in raw else "https://" + raw
         try:
             parsed = urlparse(u)
@@ -323,7 +342,7 @@ def parse_profile_input(text: str) -> Optional[Tuple[str, str, str]]:
                         return ("GitHub", parts[0], f"https://github.com/{parts[0]}")
 
             # Telegram
-            if host == "t.me":
+            if host in ("t.me", "telegram.me"):
                 if len(parts) == 1 and parts[0].lower() not in TELEGRAM_RESERVED:
                     if re.match(r"^[a-zA-Z0-9_]{5,32}$", parts[0]):
                         return ("Telegram", parts[0], f"https://t.me/{parts[0]}")
@@ -390,6 +409,10 @@ def parse_profile_input(text: str) -> Optional[Tuple[str, str, str]]:
     if raw.startswith("@") and re.match(r"^@[a-zA-Z0-9._]{1,30}$", raw):
         return ("Instagram", raw[1:], f"https://www.instagram.com/{raw[1:]}/")
 
+    # Pattern: single username like "cristiano" or "torvalds" -> default to Instagram
+    if re.match(r"^[a-zA-Z0-9._]{2,30}$", raw) and raw.lower() not in prefix_map:
+        return ("Instagram", raw, f"https://www.instagram.com/{raw}/")
+
     return None
 
 
@@ -397,7 +420,8 @@ def is_profile_url(url: str) -> bool:
     """Check if given URL corresponds to a user/channel profile page across supported platforms."""
     if not url:
         return False
-    if not (url.startswith("http://") or url.startswith("https://") or "://" in url or url.startswith("www.")):
+    # Must have URL-like structure (scheme or domain with slash)
+    if not (url.startswith(("http://", "https://", "www.")) or "://" in url or "/" in url):
         return False
     return parse_profile_input(url) is not None
 
