@@ -46,18 +46,21 @@ if ADMIN_ID:
 # Set to local server URL (e.g. "http://localhost:8081" or "http://127.0.0.1:8081") to unlock up to 2000 MB (2 GB) uploads!
 LOCAL_BOT_API_URL = os.getenv("LOCAL_BOT_API_URL", "").strip()
 # Set to True if the bot and local Bot API server share filesystem access for zero-copy delivery
-LOCAL_BOT_API_LOCAL_MODE = os.getenv("LOCAL_BOT_API_LOCAL_MODE", "false").lower() in ("1", "true", "yes")
+LOCAL_BOT_API_LOCAL_MODE = os.getenv("LOCAL_BOT_API_LOCAL_MODE", "true").lower() in ("1", "true", "yes")
+
+# Auto-start local bot API server daemon if installed and credentials are configured
+AUTO_START_LOCAL_BOT_API = os.getenv("AUTO_START_LOCAL_BOT_API", "true").lower() in ("1", "true", "yes")
 
 # Maximum upload file size in megabytes (Default: 50 MB on official cloud API; 2000 MB if Local Bot API is set)
-_default_max_size = 2000.0 if LOCAL_BOT_API_URL else 50.0
+_default_max_size = 2000.0 if (LOCAL_BOT_API_URL or (AUTO_START_LOCAL_BOT_API and TELEGRAM_API_ID and TELEGRAM_API_HASH)) else 50.0
 try:
     _env_max = float(os.getenv("MAX_FILE_SIZE_MB", str(_default_max_size)))
 except ValueError:
     _env_max = _default_max_size
 
 # Safety guard: Telegram official Cloud API strictly caps bot uploads at 50 MB.
-# Never allow MAX_FILE_SIZE_MB > 50.0 unless LOCAL_BOT_API_URL is configured!
-if not LOCAL_BOT_API_URL and _env_max > 50.0:
+# Allow up to 2000 MB if Local Bot API is set or can be auto-started with credentials
+if not LOCAL_BOT_API_URL and not (AUTO_START_LOCAL_BOT_API and TELEGRAM_API_ID and TELEGRAM_API_HASH) and _env_max > 50.0:
     MAX_FILE_SIZE_MB = 50.0
 else:
     MAX_FILE_SIZE_MB = _env_max

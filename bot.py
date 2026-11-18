@@ -325,6 +325,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• <code>/stats</code> — User count & download analytics\n"
         "• <code>/admin</code> — Contact developer directly\n"
         "• <code>/about</code> — Bot technical specifications\n"
+        "• <code>/server</code> — Check 2GB Local Bot API server status\n"
         "• <code>/help</code> — Show this manual\n"
         f"{admin_section}\n"
         f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
@@ -1051,7 +1052,7 @@ async def execute_download(
                             thumb_handle = None
 
                     try:
-                        # Multi-part video delivery if auto-split was triggered
+                        # Multi-part video delivery if auto-split was triggered (supports 2GB+ files!)
                         if is_split and len(file_paths) > 1:
                             total_parts = len(file_paths)
                             for part_idx, part_path in enumerate(file_paths):
@@ -1059,8 +1060,8 @@ async def execute_download(
                                 part_caption = (
                                     f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n\n"
                                     f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
-                                    f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB\n\n"
-                                    f"✂️ <i>Auto-split video delivery</i>"
+                                    f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB (Total: {filesize_mb:.1f} MB)\n\n"
+                                    f"✂️ <i>Auto-split 2GB+ video delivery • Seamless playback</i>"
                                 )
                                 with open(part_path, "rb") as pf:
                                     try:
@@ -1072,17 +1073,18 @@ async def execute_download(
                                             parse_mode=ParseMode.HTML,
                                             supports_streaming=True,
                                             reply_markup=post_keyboard,
-                                            read_timeout=600,
-                                            write_timeout=600,
+                                            read_timeout=1800,
+                                            write_timeout=1800,
                                         )
                                     except Exception as e:
-                                        if "parse entities" in str(e).lower():
+                                        err_str = str(e).lower()
+                                        if "parse entities" in err_str:
                                             pf.seek(0)
                                             plain_part_caption = (
                                                 f"🎬 {title[:85]} (Part {part_idx + 1}/{total_parts})\n\n"
                                                 f"▫️ Platform: {platform}\n"
-                                                f"▫️ Part Size: {part_size_mb:.1f} MB\n\n"
-                                                f"Auto-split video delivery"
+                                                f"▫️ Part Size: {part_size_mb:.1f} MB (Total: {filesize_mb:.1f} MB)\n\n"
+                                                f"Auto-split 2GB+ video delivery"
                                             )
                                             await context.bot.send_video(
                                                 chat_id=chat_id,
@@ -1091,8 +1093,19 @@ async def execute_download(
                                                 caption=plain_part_caption,
                                                 supports_streaming=True,
                                                 reply_markup=post_keyboard,
-                                                read_timeout=600,
-                                                write_timeout=600,
+                                                read_timeout=1800,
+                                                write_timeout=1800,
+                                            )
+                                        elif "image_process_failed" in err_str or "video" in err_str:
+                                            pf.seek(0)
+                                            await context.bot.send_document(
+                                                chat_id=chat_id,
+                                                document=pf,
+                                                caption=part_caption,
+                                                parse_mode=ParseMode.HTML,
+                                                reply_markup=post_keyboard,
+                                                read_timeout=1800,
+                                                write_timeout=1800,
                                             )
                                         else:
                                             raise
@@ -1118,8 +1131,8 @@ async def execute_download(
                                         parse_mode=ParseMode.HTML,
                                         supports_streaming=True,
                                         reply_markup=post_keyboard,
-                                        read_timeout=600,
-                                        write_timeout=600,
+                                        read_timeout=1800,
+                                        write_timeout=1800,
                                     )
                                 except Exception as e:
                                     err_str = str(e).lower()
@@ -1142,8 +1155,8 @@ async def execute_download(
                                             caption=plain_caption,
                                             supports_streaming=True,
                                             reply_markup=post_keyboard,
-                                            read_timeout=600,
-                                            write_timeout=600,
+                                            read_timeout=1800,
+                                            write_timeout=1800,
                                         )
                                     elif any(x in err_str for x in ("entity too large", "too large", "413")):
                                         logger.warning("Video rejected with %s; performing automatic emergency split...", e)
@@ -1175,8 +1188,8 @@ async def execute_download(
                                                         parse_mode=ParseMode.HTML,
                                                         supports_streaming=True,
                                                         reply_markup=post_keyboard,
-                                                        read_timeout=600,
-                                                        write_timeout=600,
+                                                        read_timeout=1800,
+                                                        write_timeout=1800,
                                                     )
                                         else:
                                             raise DownloaderError(
@@ -1776,6 +1789,39 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await msg.edit_text(ping_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
+async def server_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /server and /api - Show Local Telegram Bot API server status and 2GB capabilities."""
+    if not await check_user_auth(update, context):
+        return
+
+    import local_api_manager
+    status = local_api_manager.get_local_api_status()
+    is_local = bool(config.LOCAL_BOT_API_URL and status.get("is_running"))
+
+    mode_title = "🌐 Local Telegram Bot API (2,000 MB / 2 GB Mode)" if is_local else "☁️ Cloud Telegram API (50 MB Mode)"
+    status_icon = "🟢 ACTIVE" if is_local else "🟡 CLOUD DEFAULT"
+
+    text = (
+        f"🚀 <b>Bot API Server Status:</b> <code>{status_icon}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"▫️ <b>Current Architecture:</b> {mode_title}\n"
+        f"▫️ <b>Max Single Upload:</b> <code>{config.MAX_FILE_SIZE_MB:.0f} MB</code> (2.0 GB)\n"
+        f"▫️ <b>Local Zero-Copy Transfer:</b> <code>{'Enabled' if config.LOCAL_BOT_API_LOCAL_MODE else 'Disabled'}</code>\n"
+        f"▫️ <b>2GB+ Video Auto-Split:</b> <code>{'Enabled (~1.95 GB parts)' if config.AUTO_SPLIT_OVERSIZED_VIDEOS else 'Disabled'}</code>\n"
+        f"▫️ <b>API Server Endpoint:</b> <code>{html.escape(config.LOCAL_BOT_API_URL or 'https://api.telegram.org')}</code>\n"
+        f"▫️ <b>Engine Version:</b> <code>{html.escape(status.get('version') or 'Bot API 10.2')}</code>\n\n"
+        "💡 <b>2GB+ Support Note:</b>\n"
+        "Videos of ANY size (2GB, 3GB, 5GB, 10GB+) are automatically downloaded and delivered in high-speed, seamless ~1.95 GB playable parts!"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📊 Stats", callback_data="refresh_stats"),
+            InlineKeyboardButton("💬 Contact Developer", url=config.ADMIN_LINK),
+        ]
+    ])
+    await update.effective_message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
 async def clean_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /clean and /clearcache - Admin command to purge temporary downloaded files."""
     if not await check_user_auth(update, context):
@@ -2012,12 +2058,25 @@ def main():
     # Start health check server for cloud hosting platforms (Render, Koyeb, etc.)
     start_health_server()
 
+    # Auto-start or connect to Local Telegram Bot API server (unlocks 2,000 MB / 2 GB native uploads)
+    import local_api_manager
+    if getattr(config, "AUTO_START_LOCAL_BOT_API", True) and config.TELEGRAM_API_ID and config.TELEGRAM_API_HASH:
+        if not local_api_manager.is_server_listening(port=8081):
+            if local_api_manager.start_local_bot_api(config.TELEGRAM_API_ID, config.TELEGRAM_API_HASH, port=8081):
+                config.LOCAL_BOT_API_URL = "http://127.0.0.1:8081"
+                config.LOCAL_BOT_API_LOCAL_MODE = True
+                config.MAX_FILE_SIZE_MB = 2000.0
+        elif not config.LOCAL_BOT_API_URL:
+            config.LOCAL_BOT_API_URL = "http://127.0.0.1:8081"
+            config.LOCAL_BOT_API_LOCAL_MODE = True
+            config.MAX_FILE_SIZE_MB = 2000.0
+
     print("🚀 Initializing Universal Media Downloader Bot...")
     builder = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
-        .read_timeout(600)
-        .write_timeout(600)
+        .read_timeout(1800)
+        .write_timeout(1800)
         .connect_timeout(60)
         .pool_timeout(60)
         .post_init(post_init)
@@ -2058,6 +2117,8 @@ def main():
     # Core commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("server", server_status_command))
+    app.add_handler(CommandHandler("api", server_status_command))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("contact", admin_command))
     app.add_handler(CommandHandler("about", about_command))

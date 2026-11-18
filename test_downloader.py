@@ -1067,13 +1067,22 @@ class TestDownloader(unittest.TestCase):
                 downloaded_urls.append(url)
                 return mock_stream_resp
 
-            with patch("requests.get", side_effect=fake_get):
+            with patch("config.LOCAL_BOT_API_URL", ""), patch("config.MAX_FILE_SIZE_MB", 50.0), patch("requests.get", side_effect=fake_get):
                 res = d._download_twitter("https://x.com/TwitterUser/status/5555555555", temp_path)
 
             self.assertIsNotNone(res)
             self.assertEqual(res["type"], "video")
-            # Should select 720p because 4K and 1080p would exceed 50MB limit
+            # Should select 720p because 4K and 1080p would exceed 50MB limit on Cloud API
             self.assertIn("https://video.twimg.com/vid_720p.mp4", downloaded_urls)
+
+    def test_local_api_manager_status(self):
+        """Test local_api_manager status check and capability discovery."""
+        import local_api_manager
+        status = local_api_manager.get_local_api_status()
+        self.assertIn("is_running", status)
+        self.assertIn("max_upload_mb", status)
+        self.assertIn("supports_2gb", status)
+        self.assertIn("local_mode", status)
 
 
 if __name__ == "__main__":

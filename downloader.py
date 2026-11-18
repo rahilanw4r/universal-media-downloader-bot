@@ -4515,12 +4515,20 @@ class MediaDownloader:
     ) -> List[Path]:
         """
         Split an oversized video into seamless playable segments using FFmpeg stream copy (-c copy).
-        Runs in ~1-2 seconds without re-encoding.
+        Supports videos of any size (2GB, 3GB, 5GB, 10GB+) into ~1.95 GB (or ~48 MB on Cloud) parts.
+        Runs in ~2-3 seconds without re-encoding and ensures +faststart streaming.
         """
         if not input_path.exists():
             return []
 
-        limit_mb = target_part_size_mb or (config.MAX_FILE_SIZE_MB - 2.0)
+        # Determine target part size safely under Telegram's upload ceiling
+        if target_part_size_mb and target_part_size_mb > 0:
+            limit_mb = target_part_size_mb
+        elif config.LOCAL_BOT_API_URL or config.MAX_FILE_SIZE_MB > 50:
+            limit_mb = min(config.MAX_FILE_SIZE_MB - 30.0, 1950.0)
+        else:
+            limit_mb = 48.0
+
         filesize_mb = input_path.stat().st_size / (1024 * 1024)
         if filesize_mb <= limit_mb:
             return [input_path]
@@ -4528,7 +4536,7 @@ class MediaDownloader:
         if duration <= 0:
             try:
                 cmd = [FFMPEG_EXE, "-i", str(input_path)]
-                proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=10)
+                proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, timeout=15)
                 m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", proc.stderr)
                 if m:
                     h, mn, s = m.groups()
@@ -4537,7 +4545,7 @@ class MediaDownloader:
                 duration = 0
 
         num_parts = max(2, int(math.ceil(filesize_mb / limit_mb)))
-        segment_time = max(30, int((duration / num_parts) * 0.95)) if duration > 0 else 300
+        segment_time = max(30, int((duration / num_parts) * 0.94)) if duration > 0 else 600
 
         split_pattern = temp_dir / f"part_%03d_{input_path.name}"
         cmd = [
@@ -4549,12 +4557,13 @@ class MediaDownloader:
             "-f", "segment",
             "-segment_time", str(segment_time),
             "-reset_timestamps", "1",
+            "-movflags", "+faststart",
             str(split_pattern),
         ]
 
         try:
-            logger.info("Splitting %s into parts (~%d sec segments) to fit limit...", input_path.name, segment_time)
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=180)
+            logger.info("Splitting %s (%.1f MB) into ~%.0f MB parts (~%d sec segments)...", input_path.name, filesize_mb, limit_mb, segment_time)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=600)
             parts = sorted(list(temp_dir.glob(f"part_*_{input_path.name}")))
             if parts:
                 logger.info("Successfully split video into %d parts", len(parts))

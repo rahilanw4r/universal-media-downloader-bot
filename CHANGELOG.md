@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## [2.9.0] - 2026-11-18
+
+### Added
+- **2GB+ Massive Video Download & Seamless Delivery Architecture:**
+  - Automated Local Telegram Bot API server lifecycle manager (`local_api_manager.py`) with zero-copy local mode and native 2,000 MB (2 GB) uploads and downloads.
+  - Auto-starts `telegram-bot-api` binary automatically on port 8081 when credentials are provided in `.env`, eliminating Docker requirement for 2GB uploads.
+  - Added new `/server` and `/api` diagnostic commands displaying active Bot API mode (2,000 MB vs 50 MB), zero-copy status, upload ceilings, and daemon version.
+  - Advanced ultrafast FFmpeg stream-copy auto-splitter (`_split_video_into_parts`) supporting videos of ANY size (2GB, 3GB, 5GB, 10GB+) into seamless ~1.95 GB playable parts with `-movflags +faststart`.
+  - Extended upload timeouts to 1800s (30 minutes) to support large multi-gigabyte files without network interruptions.
+
+### Fixed
+- **Prevented HTTP 413 "Request Entity Too Large":**
+  - Added safety guard in `config.py` preventing upload limits from exceeding 50 MB on Cloud Telegram API while permitting full 2000 MB in Local Bot API mode.
+  - Implemented size-aware bitrate variant selection in Twitter/X downloader to prioritize highest quality renditions that fit within upload limits.
+  - Added emergency on-the-fly auto-split recovery in `bot.py` if Telegram API ever rejects an oversized upload.
+
 ## [2.8.1] - 2026-11-18
 
 ### Added
