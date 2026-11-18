@@ -1800,12 +1800,13 @@ async def server_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     mode_title = "🌐 Local Telegram Bot API (2,000 MB / 2 GB Mode)" if is_local else "☁️ Cloud Telegram API (50 MB Mode)"
     status_icon = "🟢 ACTIVE" if is_local else "🟡 CLOUD DEFAULT"
+    limit_note = " (2.0 GB)" if config.MAX_FILE_SIZE_MB >= 1000 else " (50 MB)"
 
     text = (
         f"🚀 <b>Bot API Server Status:</b> <code>{status_icon}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"▫️ <b>Current Architecture:</b> {mode_title}\n"
-        f"▫️ <b>Max Single Upload:</b> <code>{config.MAX_FILE_SIZE_MB:.0f} MB</code> (2.0 GB)\n"
+        f"▫️ <b>Max Single Upload:</b> <code>{config.MAX_FILE_SIZE_MB:.0f} MB</code>{limit_note}\n"
         f"▫️ <b>Local Zero-Copy Transfer:</b> <code>{'Enabled' if config.LOCAL_BOT_API_LOCAL_MODE else 'Disabled'}</code>\n"
         f"▫️ <b>2GB+ Video Auto-Split:</b> <code>{'Enabled (~1.95 GB parts)' if config.AUTO_SPLIT_OVERSIZED_VIDEOS else 'Disabled'}</code>\n"
         f"▫️ <b>API Server Endpoint:</b> <code>{html.escape(config.LOCAL_BOT_API_URL or 'https://api.telegram.org')}</code>\n"
@@ -1992,6 +1993,11 @@ async def admin_document_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log any unhandled exceptions during update processing."""
+    logger.error("Exception while handling an update: %s", context.error, exc_info=context.error)
+
+
 async def post_init(application: Application) -> None:
     """Register bot commands in Telegram's native command menu."""
     commands = [
@@ -2147,6 +2153,9 @@ def main():
 
     # All text messages with URLs
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+    # Global unhandled error handler
+    app.add_error_handler(global_error_handler)
 
     print(f"✅ Bot is running! Admin: {config.ADMIN_USERNAME}")
     print("🤖 Polling Telegram updates...")

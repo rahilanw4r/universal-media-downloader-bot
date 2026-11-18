@@ -140,8 +140,14 @@ def get_local_api_status(port: int = 8081) -> Dict[str, Any]:
     version = None
     if binary:
         try:
-            res = subprocess.run([str(binary), "--version"], stdout=subprocess.PIPE, text=True, timeout=2)
-            version = res.stdout.strip()
+            res = subprocess.run(
+                [str(binary), "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=2,
+            )
+            version = (res.stdout or "").strip()
         except Exception:
             version = None
 
