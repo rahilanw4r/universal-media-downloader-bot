@@ -25,6 +25,8 @@ BASE_DIR = Path(__file__).resolve().parent
 BOT_VERSION = "2.8.1"
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "").strip()
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "").strip()
 
 # Optional DiskWala extraction API key and custom resolver URL
 DISKWALA_API_KEY = os.getenv("DISKWALA_API_KEY", "").strip()
