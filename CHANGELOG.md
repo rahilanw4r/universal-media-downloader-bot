@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [2.8.1] - 2026-11-18
+
+### Fixed
+- **Crystal-Clear HD Profile Picture Quality:**
+  - Resolved blurry low-resolution 150x150 thumbnail downloads on Instagram by integrating high-definition (1080x1080) original mirror extraction and session-authenticated profile resolution.
+  - Implemented `enhance_profile_avatar` post-processor using PIL Lanczos supersampling and unsharp masking for any low-resolution thumbnails (e.g. Telegram 320x320 previews), ensuring crisp 1080p rendering with zero pixelation or blur.
+  - Added `[ 📁 Full HD File ]` button beneath profile pictures to deliver uncompressed original documents on demand directly to Telegram.
+
 ## [2.8.0] - 2026-11-18
 
 ### Added

@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable, Tuple
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageFilter
 except ImportError:
     Image = None
+    ImageFilter = None
 
 try:
     from bs4 import BeautifulSoup
@@ -814,6 +815,43 @@ def sanitize_image_file(image_path: Path) -> Optional[Path]:
         except Exception:
             pass
         return None
+
+
+def enhance_profile_avatar(image_path: Path, min_dimension: int = 1080) -> Path:
+    """
+    Ensure profile avatar is rendered in high-definition (HD) quality.
+    If image resolution is below min_dimension (e.g. low-res thumbnail),
+    upscales it using Lanczos resampling and unsharp masking for crisp clarity.
+    Saves as JPEG with quality=95 and 4:4:4 chroma subsampling.
+    """
+    if not image_path.exists() or image_path.stat().st_size == 0:
+        return image_path
+    if not Image:
+        return image_path
+    try:
+        with Image.open(image_path) as img:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            w, h = img.size
+            if min(w, h) < min_dimension:
+                ratio = min_dimension / float(min(w, h))
+                new_w = int(round(w * ratio))
+                new_h = int(round(h * ratio))
+                resample = getattr(Image, "Resampling", Image).LANCZOS
+                img = img.resize((new_w, new_h), resample=resample)
+                if ImageFilter:
+                    img = img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=2))
+            clean_path = image_path.with_suffix(".hd.jpg")
+            img.save(clean_path, "JPEG", quality=95, subsampling=0, optimize=True)
+            if clean_path != image_path:
+                image_path.unlink(missing_ok=True)
+                target = image_path.with_suffix(".jpg")
+                clean_path.replace(target)
+                return target
+            return clean_path
+    except Exception as e:
+        logger.warning(f"Could not enhance profile avatar {image_path}: {e}")
+        return image_path
 
 
 class MediaDownloader:
@@ -3234,18 +3272,21 @@ class MediaDownloader:
             profile_url = profile_url or f"https://t.me/{username}"
             if requests and BeautifulSoup:
                 try:
-                    r = requests.get(profile_url, headers=headers, timeout=12)
-                    if r.status_code == 200:
-                        soup = BeautifulSoup(r.text, "html.parser")
-                        og_img = soup.find("meta", property="og:image")
-                        og_title = soup.find("meta", property="og:title")
-                        og_desc = soup.find("meta", property="og:description")
-                        if og_img and og_img.get("content"):
-                            avatar_url = og_img.get("content")
-                        if og_title and og_title.get("content"):
-                            name = og_title.get("content").strip()
-                        if og_desc and og_desc.get("content"):
-                            bio = og_desc.get("content").strip()
+                    for preview_url in (f"https://t.me/s/{username}", profile_url):
+                        r = requests.get(preview_url, headers=headers, timeout=12)
+                        if r.status_code == 200:
+                            soup = BeautifulSoup(r.text, "html.parser")
+                            og_img = soup.find("meta", property="og:image")
+                            og_title = soup.find("meta", property="og:title")
+                            og_desc = soup.find("meta", property="og:description")
+                            if og_img and og_img.get("content"):
+                                avatar_url = og_img.get("content")
+                            if og_title and og_title.get("content"):
+                                name = og_title.get("content").strip()
+                            if og_desc and og_desc.get("content"):
+                                bio = og_desc.get("content").strip()
+                            if avatar_url:
+                                break
                 except Exception as e:
                     logger.debug("Telegram profile fetch error: %s", e)
 
@@ -3305,7 +3346,43 @@ class MediaDownloader:
                 except Exception as e:
                     logger.debug("Instagram auth web profile info error: %s", e)
 
-            # Strategy B: OpenGraph & HTML parsing
+            # Strategy B: High-definition mirrors (Dumpor / Greatfon) for authentic 1080x1080 original DP
+            if not avatar_url and requests:
+                for mirror_base in ("https://dumpor.io/v/", "https://greatfon.com/v/"):
+                    try:
+                        m_req = requests.get(f"{mirror_base}{username}", headers=headers, timeout=8)
+                        if m_req.status_code == 200 and m_req.text:
+                            m_match = re.search(
+                                r'<img[^>]+src=["\']([^"\']+)["\'][^>]+alt=["\'][^"\']*avatar[^"\']*["\']',
+                                m_req.text,
+                                re.IGNORECASE,
+                            )
+                            if not m_match:
+                                m_match = re.search(
+                                    r'<img[^>]+alt=["\'][^"\']*avatar[^"\']*["\'][^>]+src=["\']([^"\']+)["\']',
+                                    m_req.text,
+                                    re.IGNORECASE,
+                                )
+                            if m_match:
+                                m_url = m_match.group(1).strip()
+                                if m_url.startswith("//"):
+                                    m_url = "https:" + m_url
+                                if m_url.startswith("http"):
+                                    avatar_url = m_url
+                                    logger.info(f"Retrieved 1080p HD avatar for @{username} via mirror {mirror_base}")
+                                    if BeautifulSoup:
+                                        m_soup = BeautifulSoup(m_req.text, "html.parser")
+                                        h1 = m_soup.find("h1")
+                                        if h1 and h1.text:
+                                            name = h1.text.strip()
+                                        m_desc = m_soup.find("meta", attrs={"name": "description"}) or m_soup.find("meta", property="og:description")
+                                        if m_desc and m_desc.get("content"):
+                                            bio = m_desc.get("content").strip()
+                                    break
+                    except Exception as me:
+                        logger.debug("Instagram mirror fetch error from %s: %s", mirror_base, me)
+
+            # Strategy C: OpenGraph & HTML parsing fallback
             if not avatar_url and client:
                 try:
                     r = client.get(profile_url, headers=headers, timeout=12, **kwargs)
@@ -3493,6 +3570,7 @@ class MediaDownloader:
             f.write(content)
 
         valid_file = sanitize_image_file(out_file) or out_file
+        valid_file = enhance_profile_avatar(valid_file, min_dimension=1080)
         mb = valid_file.stat().st_size / (1024 * 1024)
 
         return {

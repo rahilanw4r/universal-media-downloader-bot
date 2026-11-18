@@ -22,6 +22,7 @@ from downloader import (
     is_github_url,
     is_profile_url,
     parse_profile_input,
+    enhance_profile_avatar,
     render_progress_bar,
     MediaDownloader,
     FFMPEG_EXE,
@@ -512,6 +513,22 @@ class TestDownloader(unittest.TestCase):
                 self.assertEqual(res["username"], "torvalds")
                 self.assertIn("Linus Torvalds", res["title"])
                 self.assertTrue(res["file_path"].exists())
+
+    def test_enhance_profile_avatar(self):
+        import tempfile
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as td:
+            img_path = Path(td) / "lowres_avatar.jpg"
+            # Create a 150x150 small avatar
+            Image.new("RGB", (150, 150), (200, 100, 50)).save(img_path, "JPEG")
+            self.assertTrue(img_path.exists())
+            
+            # Enhance to HD (1080 min dimension)
+            enhanced = enhance_profile_avatar(img_path, min_dimension=1080)
+            self.assertTrue(enhanced.exists())
+            with Image.open(enhanced) as im:
+                self.assertGreaterEqual(im.width, 1080)
+                self.assertGreaterEqual(im.height, 1080)
 
     def test_reddit_helpers(self):
         self.assertTrue(is_reddit_url("https://www.reddit.com/r/funny/comments/12345/title/"))

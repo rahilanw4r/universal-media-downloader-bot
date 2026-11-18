@@ -667,6 +667,7 @@ async def execute_download(
                     "platform": platform,
                     "time": time.time(),
                     "user_id": chat_id,
+                    "file_path": str(result.get("file_path", "")),
                 }
                 cleanup_expired_sessions()
 
@@ -689,8 +690,12 @@ async def execute_download(
                     caption += f"\n▫️ <b>Size:</b> {filesize_mb:.2f} MB"
 
                     pfp_buttons = []
+                    action_row = []
                     if profile_url and profile_url.startswith("http"):
-                        pfp_buttons.append([InlineKeyboardButton("🔗 Open Profile", url=profile_url)])
+                        action_row.append(InlineKeyboardButton("🔗 Open Profile", url=profile_url))
+                    action_row.append(InlineKeyboardButton("📁 Full HD File", callback_data=f"doc_{vid_session_id}"))
+                    if action_row:
+                        pfp_buttons.append(action_row)
                     if config.PROMO_CHANNELS_ENABLED:
                         promo_row = []
                         if config.MOD_APK_CHANNEL:
@@ -1503,6 +1508,34 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             action="audio",
             context=context,
         )
+
+    # Full HD Document delivery (uncompressed)
+    elif action_tag == "doc":
+        stored_path = session.get("file_path")
+        if stored_path and Path(stored_path).exists():
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_DOCUMENT)
+            doc_caption = f"📁 <b>Full-Resolution Profile File (HD)</b>\n▫️ <b>Platform:</b> {html.escape(platform)}"
+            with open(stored_path, "rb") as f:
+                await query.message.reply_document(
+                    document=f,
+                    caption=doc_caption,
+                    parse_mode=ParseMode.HTML,
+                    read_timeout=300,
+                    write_timeout=300,
+                )
+        else:
+            status_msg = await query.message.reply_text(
+                f"⏳ <b>Fetching full-resolution HD document for {html.escape(platform)}...</b>",
+                parse_mode=ParseMode.HTML,
+            )
+            await execute_download(
+                chat_id=chat_id,
+                status_msg=status_msg,
+                target_url=target_url,
+                platform=platform,
+                action="media",
+                context=context,
+            )
 
 
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
