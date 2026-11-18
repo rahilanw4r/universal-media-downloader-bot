@@ -1019,6 +1019,62 @@ class TestDownloader(unittest.TestCase):
             self.assertEqual(pres["type"], "photo")
             self.assertIn("https://pbs.twimg.com/media/G12345?format=jpg&name=orig", photo_download_urls)
 
+    def test_twitter_size_aware_variant_selection_prevents_413(self):
+        """Test Twitter selects highest variant that fits under upload limit when oversized."""
+        import tempfile
+        from unittest.mock import patch, MagicMock
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+
+            # 60s video where 4K (180MB) and 1080p (74MB) exceed 50MB, but 720p (15MB) fits
+            fake_video_json = {
+                "tweet": {
+                    "text": "Long video clip",
+                    "author": {"name": "TwitterUser"},
+                    "media": {
+                        "all": [
+                            {
+                                "type": "video",
+                                "url": "https://video.twimg.com/default.mp4",
+                                "duration": 60,
+                                "formats": [
+                                    {"url": "https://video.twimg.com/vid_480p.mp4", "bitrate": 800000, "container": "mp4"},
+                                    {"url": "https://video.twimg.com/vid_720p.mp4", "bitrate": 2100000, "container": "mp4"},
+                                    {"url": "https://video.twimg.com/vid_1080p.mp4", "bitrate": 10000000, "container": "mp4"},
+                                    {"url": "https://video.twimg.com/vid_4k.mp4", "bitrate": 25000000, "container": "mp4"},
+                                ],
+                            }
+                        ]
+                    },
+                }
+            }
+
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = fake_video_json
+
+            mock_stream_resp = MagicMock()
+            mock_stream_resp.status_code = 200
+            mock_stream_resp.iter_content.return_value = [b"stream data"]
+
+            downloaded_urls = []
+
+            def fake_get(url, *args, **kwargs):
+                if "api.fxtwitter.com" in url:
+                    return mock_resp
+                downloaded_urls.append(url)
+                return mock_stream_resp
+
+            with patch("requests.get", side_effect=fake_get):
+                res = d._download_twitter("https://x.com/TwitterUser/status/5555555555", temp_path)
+
+            self.assertIsNotNone(res)
+            self.assertEqual(res["type"], "video")
+            # Should select 720p because 4K and 1080p would exceed 50MB limit
+            self.assertIn("https://video.twimg.com/vid_720p.mp4", downloaded_urls)
+
 
 if __name__ == "__main__":
     unittest.main()

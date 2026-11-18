@@ -1114,9 +1114,14 @@ class MediaDownloader:
                 or "X (Twitter)"
             )
 
+            # Effective upload limit for a single file on Telegram
+            upload_limit_mb = 49.0 if not config.LOCAL_BOT_API_URL else (config.MAX_FILE_SIZE_MB - 1.0)
+
             # Helper to pick the absolute highest bitrate MP4 variant (4K, 1080p, 720p)
+            # that fits within the Telegram upload limit (or highest available if all fit / none fit)
             def _select_best_twitter_video_url(item: Dict[str, Any]) -> str:
                 candidates = []
+                dur = float(item.get("duration") or 0)
                 for fmt in item.get("formats", []):
                     u = fmt.get("url")
                     if not u or ".m3u8" in u.lower() or fmt.get("container") == "m3u8":
@@ -1131,6 +1136,15 @@ class MediaDownloader:
 
                 if candidates:
                     candidates.sort(key=lambda c: c[0], reverse=True)
+                    # If duration is known, prioritize the highest bitrate variant that safely fits under upload limit
+                    if dur > 0:
+                        fitting = [
+                            c for c in candidates
+                            if c[0] > 0 and ((c[0] * dur) / (8 * 1024 * 1024)) <= upload_limit_mb
+                        ]
+                        if fitting:
+                            return fitting[0][1]
+                    # If all exceed limit or duration is unknown, pick the first (highest) candidate
                     return candidates[0][1]
 
                 u = item.get("url") or ""
@@ -1258,26 +1272,68 @@ class MediaDownloader:
                 target_file = first["file"]
                 mb = target_file.stat().st_size / (1024 * 1024)
                 is_vid = first["type"] == "video"
+                duration = first.get("duration", 0)
+                is_compressed = False
+                is_split = False
+                out_files = [target_file]
+
+                if is_vid and mb > config.MAX_FILE_SIZE_MB:
+                    if config.ENABLE_VIDEO_COMPRESSION:
+                        logger.info(
+                            "Twitter video (%.1f MB) exceeds limit (%.0f MB); attempting compression...",
+                            mb,
+                            config.MAX_FILE_SIZE_MB,
+                        )
+                        comp = self._compress_video_to_fit(target_file, temp_dir, duration=duration)
+                        if comp and comp.exists():
+                            target_file = comp
+                            out_files = [target_file]
+                            mb = target_file.stat().st_size / (1024 * 1024)
+                            is_compressed = True
+
+                    if not is_compressed and config.AUTO_SPLIT_OVERSIZED_VIDEOS:
+                        parts = self._split_video_into_parts(target_file, temp_dir, duration=duration)
+                        if len(parts) > 1:
+                            out_files = parts
+                            target_file = parts[0]
+                            is_split = True
+                            logger.info("Auto-split Twitter video into %d parts", len(parts))
+                        else:
+                            raise DownloaderError(
+                                f"Twitter video is {mb:.1f} MB, which exceeds the {config.MAX_FILE_SIZE_MB:.0f} MB upload limit."
+                            )
+                    elif not is_compressed:
+                        raise DownloaderError(
+                            f"Twitter video is {mb:.1f} MB, which exceeds the {config.MAX_FILE_SIZE_MB:.0f} MB upload limit."
+                        )
+
                 thumb_file = self._extract_video_thumbnail(target_file, temp_dir) if is_vid else None
                 return {
                     "type": "video" if is_vid else "photo",
                     "file_path": target_file,
-                    "file_paths": [target_file],
+                    "file_paths": out_files,
                     "dir_path": temp_dir,
                     "title": title,
                     "uploader": uploader,
-                    "duration": first.get("duration", 0),
+                    "duration": duration,
                     "thumbnail": first.get("thumbnail"),
                     "thumb_file": thumb_file,
                     "filesize_mb": mb,
+                    "is_compressed": is_compressed,
+                    "is_split": is_split,
                 }
             else:
                 files = [d["file"] for d in downloaded]
-                mb = sum(f.stat().st_size for f in files) / (1024 * 1024)
+                valid_files = [f for f in files if (f.stat().st_size / (1024 * 1024)) <= config.MAX_FILE_SIZE_MB]
+                if not valid_files:
+                    raise DownloaderError(
+                        f"Media items exceed Telegram's {config.MAX_FILE_SIZE_MB:.0f} MB upload limit."
+                    )
+                mb = sum(f.stat().st_size for f in valid_files) / (1024 * 1024)
                 return {
                     "type": "album",
-                    "file_path": files[0],
-                    "file_paths": files,
+                    "file_path": valid_files[0],
+                    "file_paths": valid_files,
                     "dir_path": temp_dir,
                     "title": title,
                     "uploader": uploader,

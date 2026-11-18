@@ -1122,7 +1122,8 @@ async def execute_download(
                                         write_timeout=600,
                                     )
                                 except Exception as e:
-                                    if "parse entities" in str(e).lower():
+                                    err_str = str(e).lower()
+                                    if "parse entities" in err_str:
                                         f.seek(0)
                                         if thumb_handle and hasattr(thumb_handle, "seek"):
                                             thumb_handle.seek(0)
@@ -1144,6 +1145,44 @@ async def execute_download(
                                             read_timeout=600,
                                             write_timeout=600,
                                         )
+                                    elif any(x in err_str for x in ("entity too large", "too large", "413")):
+                                        logger.warning("Video rejected with %s; performing automatic emergency split...", e)
+                                        split_dir = Path(dir_path) if dir_path else Path(file_path).parent
+                                        split_parts = downloader._split_video_into_parts(
+                                            Path(file_path),
+                                            split_dir,
+                                            target_part_size_mb=48.0,
+                                            duration=duration,
+                                        )
+                                        if len(split_parts) > 1:
+                                            total_parts = len(split_parts)
+                                            for part_idx, part_path in enumerate(split_parts):
+                                                part_size_mb = part_path.stat().st_size / (1024 * 1024)
+                                                part_caption = (
+                                                    f"🎬 <b>{html.escape(title[:85])}</b> (Part {part_idx + 1}/{total_parts})\n\n"
+                                                    f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
+                                                    f"▫️ <b>Part Size:</b> {part_size_mb:.1f} MB\n\n"
+                                                    f"✂️ <i>Auto-split video delivery</i>"
+                                                )
+                                                if thumb_handle and hasattr(thumb_handle, "seek"):
+                                                    thumb_handle.seek(0)
+                                                with open(part_path, "rb") as pf:
+                                                    await context.bot.send_video(
+                                                        chat_id=chat_id,
+                                                        video=pf,
+                                                        thumbnail=thumb_handle,
+                                                        caption=part_caption,
+                                                        parse_mode=ParseMode.HTML,
+                                                        supports_streaming=True,
+                                                        reply_markup=post_keyboard,
+                                                        read_timeout=600,
+                                                        write_timeout=600,
+                                                    )
+                                        else:
+                                            raise DownloaderError(
+                                                f"File is too large for Telegram ({filesize_mb:.1f} MB exceeds {config.MAX_FILE_SIZE_MB:.0f} MB upload limit). "
+                                                "Run a Local Bot API server to upload up to 2 GB."
+                                            )
                                     else:
                                         raise
                     finally:
@@ -1203,8 +1242,8 @@ async def execute_download(
                 raw_err = str(e)
                 if "image_process_failed" in raw_err.lower():
                     friendly_err = "Telegram rejected image format rendering. Please try again."
-                elif "file is too big" in raw_err.lower():
-                    friendly_err = f"File exceeds current {config.MAX_FILE_SIZE_MB:.0f}MB upload limit. Run a Local Bot API server to unlock 2,000MB (2 GB)."
+                elif any(x in raw_err.lower() for x in ("file is too big", "too large", "entity too large", "413")):
+                    friendly_err = f"File exceeds Telegram's {config.MAX_FILE_SIZE_MB:.0f}MB upload limit. Run a Local Bot API server to unlock 2,000MB (2 GB)."
                 else:
                     friendly_err = html.escape(raw_err)
 

@@ -51,9 +51,16 @@ LOCAL_BOT_API_LOCAL_MODE = os.getenv("LOCAL_BOT_API_LOCAL_MODE", "false").lower(
 # Maximum upload file size in megabytes (Default: 50 MB on official cloud API; 2000 MB if Local Bot API is set)
 _default_max_size = 2000.0 if LOCAL_BOT_API_URL else 50.0
 try:
-    MAX_FILE_SIZE_MB = float(os.getenv("MAX_FILE_SIZE_MB", str(_default_max_size)))
+    _env_max = float(os.getenv("MAX_FILE_SIZE_MB", str(_default_max_size)))
 except ValueError:
-    MAX_FILE_SIZE_MB = _default_max_size
+    _env_max = _default_max_size
+
+# Safety guard: Telegram official Cloud API strictly caps bot uploads at 50 MB.
+# Never allow MAX_FILE_SIZE_MB > 50.0 unless LOCAL_BOT_API_URL is configured!
+if not LOCAL_BOT_API_URL and _env_max > 50.0:
+    MAX_FILE_SIZE_MB = 50.0
+else:
+    MAX_FILE_SIZE_MB = _env_max
 
 # Automatically split oversized videos into seamless parts
 AUTO_SPLIT_OVERSIZED_VIDEOS = os.getenv("AUTO_SPLIT_OVERSIZED_VIDEOS", "true").lower() in ("1", "true", "yes")
