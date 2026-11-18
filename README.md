@@ -4,7 +4,7 @@
 
 **A high-performance, modular Telegram bot for downloading media in 100% full original quality from 1,000+ platforms.**
 
-[![Release](https://img.shields.io/badge/Release-v2.7.0-blue.svg?style=for-the-badge)](CHANGELOG.md)
+[![Release](https://img.shields.io/badge/Release-v2.8.1-blue.svg?style=for-the-badge)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram_Bot_API-21.0%2B-2CA5E0.svg?style=for-the-badge&logo=telegram&logoColor=white)](https://github.com/python-telegram-bot/python-telegram-bot)

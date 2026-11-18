@@ -16,6 +16,9 @@ import uuid
 from urllib.parse import quote, unquote, urlparse, parse_qs
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Callable, Tuple
+from concurrent.futures import ThreadPoolExecutor
+
+STREAM_CHUNK_SIZE = 524288  # 512 KB streaming buffer for high-throughput downloads
 
 try:
     from PIL import Image, ImageFilter
@@ -1010,7 +1013,7 @@ class MediaDownloader:
                             resp = requests.get(vid_url, headers=headers, stream=True, timeout=30)
                             if resp.status_code == 200:
                                 with open(vid_path, "wb") as f:
-                                    for chunk in resp.iter_content(chunk_size=65536):
+                                    for chunk in resp.iter_content(chunk_size=STREAM_CHUNK_SIZE):
                                         if chunk:
                                             f.write(chunk)
                                 mb = vid_path.stat().st_size / (1024 * 1024)
@@ -1144,7 +1147,7 @@ class MediaDownloader:
                     r = requests.get(vid_url, headers=headers, stream=True, timeout=30)
                     if r.status_code == 200:
                         with open(fpath, "wb") as f:
-                            for chunk in r.iter_content(65536):
+                            for chunk in r.iter_content(STREAM_CHUNK_SIZE):
                                 f.write(chunk)
                         mb = fpath.stat().st_size / (1024 * 1024)
                         thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
@@ -1501,7 +1504,7 @@ class MediaDownloader:
             last_bytes = 0
 
             with open(out_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=65536):
+                for chunk in resp.iter_content(chunk_size=STREAM_CHUNK_SIZE):
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -1789,7 +1792,7 @@ class MediaDownloader:
             last_bytes = 0
 
             with open(out_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=65536):
+                for chunk in resp.iter_content(chunk_size=STREAM_CHUNK_SIZE):
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -1979,7 +1982,7 @@ class MediaDownloader:
                 last_bytes = 0
 
                 with open(video_path, "wb") as f:
-                    for chunk in v_resp.iter_content(chunk_size=65536):
+                    for chunk in v_resp.iter_content(chunk_size=STREAM_CHUNK_SIZE):
                         if chunk:
                             f.write(chunk)
                             downloaded += len(chunk)
@@ -2245,7 +2248,7 @@ class MediaDownloader:
                 return None
 
             li_items = re.findall(r'<li\b[^>]*>([\s\S]*?)</li>', d_html) or [d_html]
-            downloaded_files: List[Path] = []
+            tasks = []
 
             for idx, li_block in enumerate(li_items[:10]):
                 btn_matches = re.findall(r'href=["\'](https://dl\.snapcdn\.app/saveinsta\?token=[^\s"\'<>]+)["\']', li_block)
@@ -2287,17 +2290,43 @@ class MediaDownloader:
                 if best_url:
                     ext = ".mp4" if is_vid else ".jpg"
                     dest_path = temp_dir / f"ig_si_{shortcode}_{idx}{ext}"
-                    dl_resp = requests.get(best_url, headers={"User-Agent": headers["User-Agent"]}, stream=True, timeout=30)
+                    tasks.append((idx, best_url, is_vid, dest_path))
+
+            if not tasks:
+                return None
+
+            downloaded_files: List[Path] = []
+            ua_header = {"User-Agent": headers["User-Agent"]}
+
+            def _dl_single_task(task_item):
+                i_idx, b_url, is_v, d_path = task_item
+                try:
+                    dl_resp = requests.get(b_url, headers=ua_header, stream=True, timeout=30)
                     if dl_resp.status_code == 200:
-                        with open(dest_path, "wb") as f:
-                            for chunk in dl_resp.iter_content(65536):
+                        with open(d_path, "wb") as f:
+                            for chunk in dl_resp.iter_content(STREAM_CHUNK_SIZE):
                                 f.write(chunk)
-                        if is_vid:
-                            downloaded_files.append(dest_path)
+                        if is_v:
+                            return (i_idx, d_path)
                         else:
-                            val_img = sanitize_image_file(dest_path)
+                            val_img = sanitize_image_file(d_path)
                             if val_img:
-                                downloaded_files.append(val_img)
+                                return (i_idx, val_img)
+                except Exception as dle:
+                    logger.debug("SaveInsta download task %s error: %s", i_idx, dle)
+                return (i_idx, None)
+
+            if len(tasks) == 1:
+                _, res_f = _dl_single_task(tasks[0])
+                if res_f:
+                    downloaded_files.append(res_f)
+            else:
+                with ThreadPoolExecutor(max_workers=min(len(tasks), 5)) as pool:
+                    res_items = list(pool.map(_dl_single_task, tasks))
+                    res_items.sort(key=lambda x: x[0])
+                    for _, res_f in res_items:
+                        if res_f:
+                            downloaded_files.append(res_f)
 
             if not downloaded_files:
                 return None
@@ -2387,7 +2416,7 @@ class MediaDownloader:
                     dl = requests.get(media_url, headers={"User-Agent": "Mozilla/5.0"}, stream=True, timeout=30)
                     if dl.status_code == 200:
                         with open(dest, "wb") as f:
-                            for chunk in dl.iter_content(65536):
+                            for chunk in dl.iter_content(STREAM_CHUNK_SIZE):
                                 f.write(chunk)
                         if is_vid:
                             mb = dest.stat().st_size / (1024 * 1024)
@@ -2420,7 +2449,7 @@ class MediaDownloader:
                             }
                 elif status == "picker" and c_data.get("picker"):
                     picker_items = c_data["picker"]
-                    downloaded_files: List[Path] = []
+                    picker_tasks = []
                     for idx, item in enumerate(picker_items[:10]):
                         p_url = item.get("url")
                         if not p_url:
@@ -2429,17 +2458,39 @@ class MediaDownloader:
                         is_vid = (p_type == "video")
                         ext = ".mp4" if is_vid else ".jpg"
                         dest = temp_dir / f"ig_cobalt_picker_{shortcode}_{idx}{ext}"
-                        dl = requests.get(p_url, headers={"User-Agent": "Mozilla/5.0"}, stream=True, timeout=30)
-                        if dl.status_code == 200:
-                            with open(dest, "wb") as f:
-                                for chunk in dl.iter_content(65536):
-                                    f.write(chunk)
-                            if is_vid:
-                                downloaded_files.append(dest)
-                            else:
-                                val_img = sanitize_image_file(dest)
-                                if val_img:
-                                    downloaded_files.append(val_img)
+                        picker_tasks.append((idx, p_url, is_vid, dest))
+
+                    downloaded_files: List[Path] = []
+
+                    def _dl_cobalt_item(task_item):
+                        i_idx, p_url, is_v, d_path = task_item
+                        try:
+                            dl = requests.get(p_url, headers={"User-Agent": "Mozilla/5.0"}, stream=True, timeout=30)
+                            if dl.status_code == 200:
+                                with open(d_path, "wb") as f:
+                                    for chunk in dl.iter_content(STREAM_CHUNK_SIZE):
+                                        f.write(chunk)
+                                if is_v:
+                                    return (i_idx, d_path)
+                                else:
+                                    val_img = sanitize_image_file(d_path)
+                                    if val_img:
+                                        return (i_idx, val_img)
+                        except Exception as ce:
+                            logger.debug("Cobalt item %s error: %s", i_idx, ce)
+                        return (i_idx, None)
+
+                    if len(picker_tasks) == 1:
+                        _, res_f = _dl_cobalt_item(picker_tasks[0])
+                        if res_f:
+                            downloaded_files.append(res_f)
+                    elif len(picker_tasks) > 1:
+                        with ThreadPoolExecutor(max_workers=min(len(picker_tasks), 5)) as pool:
+                            c_items = list(pool.map(_dl_cobalt_item, picker_tasks))
+                            c_items.sort(key=lambda x: x[0])
+                            for _, res_f in c_items:
+                                if res_f:
+                                    downloaded_files.append(res_f)
 
                     if downloaded_files:
                         if len(downloaded_files) == 1:
@@ -2717,7 +2768,7 @@ class MediaDownloader:
                             r_dl = sess.get(m_url, headers=headers, stream=(m_type == "video"), timeout=25)
                             if r_dl.status_code == 200:
                                 with open(fpath, "wb") as f:
-                                    for chunk in r_dl.iter_content(65536):
+                                    for chunk in r_dl.iter_content(STREAM_CHUNK_SIZE):
                                         f.write(chunk)
                                 if m_type == "video":
                                     downloaded.append(fpath)
@@ -2800,7 +2851,7 @@ class MediaDownloader:
                             r_v = requests.get(og_vid, headers=headers, stream=True, timeout=25)
                             if r_v.status_code == 200:
                                 with open(fpath, "wb") as f:
-                                    for chunk in r_v.iter_content(65536):
+                                    for chunk in r_v.iter_content(STREAM_CHUNK_SIZE):
                                         f.write(chunk)
                                 if fpath.stat().st_size > 1024:
                                     mb = fpath.stat().st_size / (1024 * 1024)
@@ -2916,7 +2967,7 @@ class MediaDownloader:
                         ext = ".jpg"
                     fpath = temp_dir / f"reddit_image_{uuid.uuid4().hex[:8]}{ext}"
                     with open(fpath, "wb") as f:
-                        for chunk in r.iter_content(65536):
+                        for chunk in r.iter_content(STREAM_CHUNK_SIZE):
                             f.write(chunk)
                     valid_img = sanitize_image_file(fpath) or fpath
                     if valid_img.exists() and valid_img.stat().st_size > 100:
@@ -3114,7 +3165,7 @@ class MediaDownloader:
                         r = requests.get(target_dl, headers=dl_hdrs, stream=True, timeout=60)
                         if r.status_code == 200:
                             with open(fpath, "wb") as f:
-                                for chunk in r.iter_content(65536):
+                                for chunk in r.iter_content(STREAM_CHUNK_SIZE):
                                     f.write(chunk)
                             if fpath.exists() and fpath.stat().st_size > 1000:
                                 mb = fpath.stat().st_size / (1024 * 1024)
@@ -3173,7 +3224,7 @@ class MediaDownloader:
                     r_vid = requests.get(vid_content, headers=vx_headers, stream=True, timeout=60)
                     if r_vid.status_code == 200:
                         with open(fpath, "wb") as f:
-                            for chunk in r_vid.iter_content(65536):
+                            for chunk in r_vid.iter_content(STREAM_CHUNK_SIZE):
                                 f.write(chunk)
                         if fpath.exists() and fpath.stat().st_size > 1000:
                             mb = fpath.stat().st_size / (1024 * 1024)
@@ -3408,7 +3459,7 @@ class MediaDownloader:
                         r_stream = requests.get(cand_url, headers=headers, stream=True, timeout=30)
                         if r_stream.status_code == 200:
                             with open(raw_temp, "wb") as f:
-                                for chunk in r_stream.iter_content(65536):
+                                for chunk in r_stream.iter_content(STREAM_CHUNK_SIZE):
                                     f.write(chunk)
                             if raw_temp.exists() and raw_temp.stat().st_size > 1000:
                                 out_mp3 = temp_dir / f"reddit_audio_{uuid.uuid4().hex[:8]}.mp3"
@@ -3576,7 +3627,7 @@ class MediaDownloader:
             r = requests.get(url, stream=True, timeout=60)
             if r.status_code == 200:
                 with open(target, "wb") as f:
-                    for chunk in r.iter_content(65536):
+                    for chunk in r.iter_content(STREAM_CHUNK_SIZE):
                         f.write(chunk)
                 mb = target.stat().st_size / (1024 * 1024)
                 return {
@@ -3607,7 +3658,7 @@ class MediaDownloader:
                     r = requests.get(zip_url, stream=True, timeout=60)
                     if r.status_code == 200:
                         with open(zip_target, "wb") as f:
-                            for chunk in r.iter_content(65536):
+                            for chunk in r.iter_content(STREAM_CHUNK_SIZE):
                                 f.write(chunk)
                         if zip_target.exists() and zip_target.stat().st_size > 100:
                             success = True
@@ -4085,7 +4136,7 @@ class MediaDownloader:
             r = requests.get(url, headers=headers, stream=True, timeout=25)
             if r.status_code == 200:
                 with open(fpath, "wb") as f:
-                    for chunk in r.iter_content(65536):
+                    for chunk in r.iter_content(STREAM_CHUNK_SIZE):
                         f.write(chunk)
                 valid = sanitize_image_file(fpath) or fpath
                 if valid.exists() and valid.stat().st_size > 100:

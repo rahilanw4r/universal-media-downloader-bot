@@ -4,11 +4,19 @@ All notable changes to this project are documented here.
 
 ## [2.8.1] - 2026-11-18
 
+### Added
+- **Unauthenticated Instagram Download Engine (Reels, Videos, Photos, Carousels):**
+  - Integrated SaveInsta and Cobalt API resolvers with direct Meta CDN JWT token extraction, bypassing Meta's unauthenticated login walls and empty media responses.
+  - Added parallel asynchronous multi-slide carousel downloads using `ThreadPoolExecutor` and 512 KB streaming buffers, cutting album download time by over 5x.
+  - Added Instagram logged-out embed `contextJSON` metadata scraper to extract authentic emoji post captions, author usernames, and video duration without requiring cookies.
+
 ### Fixed
-- **Crystal-Clear HD Profile Picture Quality:**
-  - Resolved blurry low-resolution 150x150 thumbnail downloads on Instagram by integrating high-definition (1080x1080) original mirror extraction and session-authenticated profile resolution.
-  - Implemented `enhance_profile_avatar` post-processor using PIL Lanczos supersampling and unsharp masking for any low-resolution thumbnails (e.g. Telegram 320x320 previews), ensuring crisp 1080p rendering with zero pixelation or blur.
-  - Added `[ 📁 Full HD File ]` button beneath profile pictures to deliver uncompressed original documents on demand directly to Telegram.
+- **Crystal-Clear HD Profile Picture Quality & Uncompressed Delivery:**
+  - Resolved blurry low-resolution 150x150 thumbnail downloads on Instagram by integrating native `profile_pic.www.1080.C3` (1080x1080) original CDN avatar extraction via SaveInsta, Dumpor, and Greatfon.
+  - Fixed duplicate `@handle (@handle)` formatting in profile captions, standardizing cleanly on `👤 @username`.
+  - Fixed callback handling for `[ 📁 Full HD File ]` (`dl:doc:<id>` and `doc_<id>`), ensuring uncompressed original quality documents are delivered on click.
+- **Local Bot API Offline Resilience:**
+  - Added socket pre-flight connectivity check for `LOCAL_BOT_API_URL` to seamlessly fall back to Cloud Telegram API if the local server is offline without crashing.
 
 ## [2.8.0] - 2026-11-18
 

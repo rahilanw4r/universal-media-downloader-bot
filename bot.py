@@ -250,12 +250,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"Add me to any group chat and I'll automatically download and send every media link shared by members!\n\n"
         f"📌 <b>Quick Commands:</b>\n"
         f"• <b>Paste any link</b> — Auto-download media in original quality\n"
+        f"• <code>/pfp &lt;user or link&gt;</code> — Download HD profile pictures & avatars\n"
         f"• <code>/mp3 &lt;link&gt;</code> — Extract 192kbps audio with cover art\n"
         f"• <code>/stop</code> — Stop active downloads & clear sessions\n"
         f"• <code>/ping</code> — Check server latency & operational status\n"
         f"• <code>/stats</code> — View user analytics & download count\n"
         f"• <code>/help</code> — Full guide & instructions\n"
-        f"• <code>/admin</code> — Contact developer (@RahilAnw4r)\n\n"
+        f"• <code>/admin</code> — Contact developer ({config.ADMIN_USERNAME})\n\n"
         f"💬 <b>Community discussion:</b> <a href=\"https://t.me/BootScreenCommunity\">Join @BootScreenCommunity</a>\n\n"
         f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
@@ -411,15 +412,19 @@ def get_changelog_text() -> str:
     return (
         f"📢 <b>Universal Media Downloader v{config.BOT_VERSION} Release Notes</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🚀 <b>v2.6.0 (Latest Release):</b>\n\n"
+        f"🚀 <b>v{config.BOT_VERSION} (Latest Release):</b>\n\n"
+        "• 📸 <b>Native 1080p Instagram Engine:</b>\n"
+        "  Full unauthenticated Instagram extraction for Reels, single videos, photo posts, and multi-slide carousels via SaveInsta & Cobalt direct CDN bypass without requiring login session cookies.\n\n"
+        "• 👤 <b>Universal HD Profile Picture Downloader (<code>/pfp</code>):</b>\n"
+        "  Download crystal clear full HD (1080x1080) avatars and profile pictures from Instagram, GitHub, Telegram, X/Twitter, YouTube, TikTok, Pinterest, Reddit & Threads with uncompressed document file fallback.\n\n"
+        "• 🔘 <b>Interactive Inline Action Buttons:</b>\n"
+        "  Instant Full HD uncompressed file delivery (<code>📁 Full HD File</code>), MP3 audio extraction, and direct profile open button attached to all media outputs.\n\n"
         "• 🎵 <b>TikTok Direct Engine (No Watermark):</b>\n"
-        "  Direct high-speed engine resolving ISP & regional network blocks. Delivers HD videos without watermarks, full photo carousel albums, and pristine 192kbps MP3 audio.\n\n"
+        "  High-speed direct engine delivering HD videos without watermarks, full photo carousel albums, and pristine 192kbps MP3 audio.\n\n"
         "• 📦 <b>DiskWala & TeraBox Overhaul:</b>\n"
-        "  Full integration for DiskWala (diskwala.com, playdiskwala.in, diskwala.fun across /app, /s, /c) with direct stream resolvers. Overhauled TeraBox engine with fast redirect resolution, jsToken extraction, and NDUS session cookies.\n\n"
-        "• 🛑 <b>Task Cancellation:</b>\n"
-        "  Added <code>/stop</code> and <code>/cancel</code> commands to abort running downloads and clean up active sessions.\n\n"
-        "• ⚡ <b>2 GB Uploads & Stream Splitting:</b>\n"
-        "  Seamless Local Bot API integration with automated FFmpeg stream-copy splitting for large media files exceeding limits.\n\n"
+        "  Full integration for DiskWala across /app, /s, /c with direct stream resolvers, and fast TeraBox jsToken extraction.\n\n"
+        "• ⚡ <b>Local Bot API Auto-Detection & Fallback:</b>\n"
+        "  Smooth pre-flight health check with automatic Cloud Telegram API fallback if the local API server is offline.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "💡 <i>Tip: Forward this announcement directly to your community group or broadcast it to users with /broadcast!</i>"
     )
@@ -597,7 +602,7 @@ def get_media_post_keyboard(
         )
     if doc_session_id:
         action_row.append(
-            InlineKeyboardButton("📁 Full HD File", callback_data=f"doc_{doc_session_id}")
+            InlineKeyboardButton("📁 Full HD File", callback_data=f"dl:doc:{doc_session_id}")
         )
     if action_row:
         rows.append(action_row)
@@ -708,7 +713,7 @@ async def execute_download(
                     action_row = []
                     if profile_url and profile_url.startswith("http"):
                         action_row.append(InlineKeyboardButton("🔗 Open Profile", url=profile_url))
-                    action_row.append(InlineKeyboardButton("📁 Full HD File", callback_data=f"doc_{vid_session_id}"))
+                    action_row.append(InlineKeyboardButton("📁 Full HD File", callback_data=f"dl:doc:{vid_session_id}"))
                     if action_row:
                         pfp_buttons.append(action_row)
                     if config.PROMO_CHANNELS_ENABLED:
@@ -1486,13 +1491,18 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             pass
         return
 
-    # 5. Download Buttons: format -> dl:<action>:<session_id>
-    parts = data.split(":")
-    if len(parts) < 3 or parts[0] != "dl":
+    # 5. Download Buttons: format -> dl:<action>:<session_id> or doc_<session_id>
+    if data.startswith("doc_"):
+        action_tag = "doc"
+        session_id = data[4:]
+    elif data.startswith("dl:"):
+        parts = data.split(":")
+        if len(parts) < 3:
+            return
+        action_tag = parts[1]
+        session_id = parts[2]
+    else:
         return
-
-    action_tag = parts[1]
-    session_id = parts[2]
 
     session = url_sessions.get(session_id)
     if not session:
