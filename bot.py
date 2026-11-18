@@ -584,13 +584,23 @@ def get_promo_caption_footer() -> str:
     return ""
 
 
-def get_media_post_keyboard(vid_session_id: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
+def get_media_post_keyboard(
+    vid_session_id: Optional[str] = None,
+    doc_session_id: Optional[str] = None,
+) -> Optional[InlineKeyboardMarkup]:
     """Build the action and channel promotion keyboard attached to media outputs."""
     rows = []
+    action_row = []
     if vid_session_id:
-        rows.append([
-            InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}"),
-        ])
+        action_row.append(
+            InlineKeyboardButton("🎵 Extract MP3 Audio", callback_data=f"dl:aud:{vid_session_id}")
+        )
+    if doc_session_id:
+        action_row.append(
+            InlineKeyboardButton("📁 Full HD File", callback_data=f"doc_{doc_session_id}")
+        )
+    if action_row:
+        rows.append(action_row)
     if config.PROMO_CHANNELS_ENABLED:
         promo_row = []
         if config.MOD_APK_CHANNEL:
@@ -682,9 +692,12 @@ async def execute_download(
                     bio = result.get("bio", "").strip()
                     profile_url = result.get("profile_url", "")
 
-                    caption = f"👤 <b>{html.escape(name)}</b>"
-                    if username and username.lower() not in name.lower():
-                        caption += f" (<code>@{html.escape(username)}</code>)"
+                    clean_name = name.lstrip("@").strip()
+                    clean_username = username.lstrip("@").strip()
+                    if not clean_name or clean_name.lower() == clean_username.lower():
+                        caption = f"👤 <b>@{html.escape(clean_username)}</b>"
+                    else:
+                        caption = f"👤 <b>{html.escape(clean_name)}</b> (<code>@{html.escape(clean_username)}</code>)"
                     caption += f"\n\n▫️ <b>Platform:</b> {html.escape(platform)}"
                     if bio:
                         clean_bio = " ".join(bio.split())[:200] + ("..." if len(bio) > 200 else "")
@@ -754,7 +767,10 @@ async def execute_download(
                         f"▫️ <b>Platform:</b> {html.escape(platform)}\n"
                         f"▫️ <b>Size:</b> {filesize_mb:.1f} MB"
                     )
-                    photo_keyboard = get_media_post_keyboard(vid_session_id if is_video_link else None)
+                    photo_keyboard = get_media_post_keyboard(
+                        vid_session_id=vid_session_id if is_video_link else None,
+                        doc_session_id=vid_session_id,
+                    )
 
                     with open(file_path, "rb") as f:
                         try:
@@ -1516,12 +1532,14 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         stored_path = session.get("file_path")
         if stored_path and Path(stored_path).exists():
             await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_DOCUMENT)
-            doc_caption = f"📁 <b>Full-Resolution Profile File (HD)</b>\n▫️ <b>Platform:</b> {html.escape(platform)}"
+            doc_caption = f"📁 <b>Full-Resolution File (Original Quality)</b>\n▫️ <b>Platform:</b> {html.escape(platform)}"
+            doc_kb = get_media_post_keyboard()
             with open(stored_path, "rb") as f:
                 await query.message.reply_document(
                     document=f,
                     caption=doc_caption,
                     parse_mode=ParseMode.HTML,
+                    reply_markup=doc_kb,
                     read_timeout=300,
                     write_timeout=300,
                 )

@@ -2116,16 +2116,380 @@ class MediaDownloader:
             logger.warning(f"TikTok audio direct conversion failed: {e}")
             return None
 
+    def _get_instagram_metadata(self, shortcode: str) -> Dict[str, Any]:
+        """
+        Extract authentic caption, author username, and duration from Instagram logged-out embed context.
+        """
+        result = {
+            "title": "Instagram Post",
+            "uploader": "Instagram",
+            "duration": 0,
+        }
+        if not requests:
+            return result
+
+        candidates = [
+            f"https://www.instagram.com/reel/{shortcode}/embed/captioned/",
+            f"https://www.instagram.com/p/{shortcode}/embed/captioned/",
+        ]
+        bot_headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+
+        for emb_url in candidates:
+            try:
+                r = requests.get(emb_url, headers=bot_headers, timeout=8, allow_redirects=False)
+                if r.status_code == 200 and r.text:
+                    html_text = r.text
+                    idx = html_text.find('"contextJSON":')
+                    if idx != -1:
+                        decoder = json.JSONDecoder()
+                        raw_str, _ = decoder.raw_decode(html_text[idx + len('"contextJSON":'):])
+                        if raw_str:
+                            ctx_obj = json.loads(raw_str)
+                            gql_media = (ctx_obj.get("gql_data") or {}).get("shortcode_media") or {}
+                            edges = (gql_media.get("edge_media_to_caption") or {}).get("edges") or []
+                            if edges and edges[0].get("node", {}).get("text"):
+                                result["title"] = edges[0]["node"]["text"].strip()
+                            owner = gql_media.get("owner") or {}
+                            if owner.get("username"):
+                                result["uploader"] = owner["username"]
+                            if gql_media.get("video_duration"):
+                                result["duration"] = int(gql_media["video_duration"])
+                            return result
+
+                    if BeautifulSoup:
+                        soup = BeautifulSoup(html_text, "html.parser")
+                        og_desc = soup.find("meta", property="og:description")
+                        og_title = soup.find("meta", property="og:title")
+                        if og_desc and og_desc.get("content"):
+                            result["title"] = og_desc["content"].strip()
+                        if og_title and og_title.get("content"):
+                            t_val = og_title["content"].strip()
+                            if "@" in t_val:
+                                result["uploader"] = t_val.split("@")[-1].split(")")[0].strip()
+                        if result["title"] != "Instagram Post":
+                            return result
+            except Exception as e:
+                logger.debug("Instagram embed metadata extraction failed for %s: %s", shortcode, e)
+
+        return result
+
+    def _download_instagram_saveinsta(
+        self,
+        canonical_url: str,
+        shortcode: str,
+        temp_dir: Path,
+        meta_info: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Download Instagram reel, video, photo, or multi-item carousel album using SaveInsta API
+        with JWT token decoding directly to Meta CDN endpoints.
+        """
+        if not requests:
+            return None
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://saveinsta.to/en",
+        }
+
+        try:
+            h_res = requests.get("https://saveinsta.to/en", headers=headers, timeout=10)
+            if h_res.status_code != 200:
+                return None
+            k_exp_m = re.search(r'k_exp\s*=\s*["\']([^"\']+)["\']', h_res.text)
+            k_token_m = re.search(r'k_token\s*=\s*["\']([^"\']+)["\']', h_res.text)
+            if not k_exp_m or not k_token_m:
+                return None
+            k_exp = k_exp_m.group(1)
+            k_token = k_token_m.group(1)
+
+            v_res = requests.post(
+                "https://saveinsta.to/api/userverify",
+                data={"url": canonical_url},
+                headers={**headers, "X-Requested-With": "XMLHttpRequest", "Origin": "https://saveinsta.to"},
+                timeout=10,
+            )
+            cftoken = (v_res.json() if v_res.status_code == 200 else {}).get("token")
+            if not cftoken:
+                return None
+
+            s_data = {
+                "q": canonical_url,
+                "t": "media",
+                "lang": "en",
+                "v": "v2",
+                "k_exp": k_exp,
+                "k_token": k_token,
+                "cftoken": cftoken,
+            }
+            s_res = requests.post(
+                "https://saveinsta.to/api/ajaxSearch",
+                data=s_data,
+                headers={**headers, "X-Requested-With": "XMLHttpRequest", "Origin": "https://saveinsta.to"},
+                timeout=18,
+            )
+            if s_res.status_code != 200:
+                return None
+            s_json = s_res.json()
+            if s_json.get("status") != "ok":
+                return None
+            d_html = s_json.get("data", "")
+            if not d_html:
+                return None
+
+            li_items = re.findall(r'<li\b[^>]*>([\s\S]*?)</li>', d_html) or [d_html]
+            downloaded_files: List[Path] = []
+
+            for idx, li_block in enumerate(li_items[:10]):
+                btn_matches = re.findall(r'href=["\'](https://dl\.snapcdn\.app/saveinsta\?token=[^\s"\'<>]+)["\']', li_block)
+                if not btn_matches:
+                    continue
+
+                best_url = None
+                is_vid = False
+                for b_url in btn_matches:
+                    t_val = urllib.parse.parse_qs(urllib.parse.urlparse(b_url).query).get("token", [""])[0]
+                    if t_val:
+                        try:
+                            payload = t_val.split(".")[1]
+                            padded = payload + "=" * (-len(payload) % 4)
+                            d = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+                            direct = d.get("url", "")
+                            if ".mp4" in direct or "video" in direct:
+                                best_url = direct
+                                is_vid = True
+                                break
+                        except Exception:
+                            pass
+
+                if not best_url:
+                    first_b = btn_matches[0]
+                    t_val = urllib.parse.parse_qs(urllib.parse.urlparse(first_b).query).get("token", [""])[0]
+                    if t_val:
+                        try:
+                            payload = t_val.split(".")[1]
+                            padded = payload + "=" * (-len(payload) % 4)
+                            d = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+                            best_url = d.get("url") or first_b
+                        except Exception:
+                            best_url = first_b
+                    else:
+                        best_url = first_b
+                    is_vid = False
+
+                if best_url:
+                    ext = ".mp4" if is_vid else ".jpg"
+                    dest_path = temp_dir / f"ig_si_{shortcode}_{idx}{ext}"
+                    dl_resp = requests.get(best_url, headers={"User-Agent": headers["User-Agent"]}, stream=True, timeout=30)
+                    if dl_resp.status_code == 200:
+                        with open(dest_path, "wb") as f:
+                            for chunk in dl_resp.iter_content(65536):
+                                f.write(chunk)
+                        if is_vid:
+                            downloaded_files.append(dest_path)
+                        else:
+                            val_img = sanitize_image_file(dest_path)
+                            if val_img:
+                                downloaded_files.append(val_img)
+
+            if not downloaded_files:
+                return None
+
+            title = meta_info.get("title") or "Instagram Post"
+            author = meta_info.get("uploader") or "Instagram"
+            duration = meta_info.get("duration", 0)
+
+            if len(downloaded_files) == 1:
+                target = downloaded_files[0]
+                mb = target.stat().st_size / (1024 * 1024)
+                is_single_vid = target.suffix.lower() in VIDEO_EXTS
+                thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_single_vid else None
+                return {
+                    "type": "video" if is_single_vid else "photo",
+                    "file_path": target,
+                    "file_paths": [target],
+                    "dir_path": temp_dir,
+                    "title": title,
+                    "uploader": author,
+                    "duration": duration,
+                    "thumbnail": None,
+                    "thumb_file": thumb_file,
+                    "filesize_mb": mb,
+                }
+            else:
+                mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
+                return {
+                    "type": "album",
+                    "file_path": downloaded_files[0],
+                    "file_paths": downloaded_files,
+                    "dir_path": temp_dir,
+                    "title": title,
+                    "uploader": author,
+                    "duration": 0,
+                    "thumbnail": None,
+                    "filesize_mb": mb,
+                }
+        except Exception as e:
+            logger.debug("SaveInsta extraction failed for %s: %s", shortcode, e)
+            return None
+
+    def _download_instagram_cobalt(
+        self,
+        canonical_url: str,
+        shortcode: str,
+        temp_dir: Path,
+        meta_info: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Download Instagram media using public Cobalt instances.
+        """
+        if not requests:
+            return None
+
+        instances = [
+            "https://cobaltapi.cjs.nz/",
+        ]
+
+        title = meta_info.get("title") or "Instagram Post"
+        author = meta_info.get("uploader") or "Instagram"
+        duration = meta_info.get("duration", 0)
+
+        for inst in instances:
+            try:
+                c_resp = requests.post(
+                    inst,
+                    json={"url": canonical_url},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "User-Agent": "UniversalMediaDownloader/1.0",
+                    },
+                    timeout=15,
+                )
+                if c_resp.status_code != 200:
+                    continue
+                c_data = c_resp.json()
+                status = c_data.get("status")
+
+                if status in ("redirect", "tunnel") and c_data.get("url"):
+                    media_url = c_data["url"]
+                    fn = c_data.get("filename", "")
+                    is_vid = fn.endswith(".mp4") or "reel" in canonical_url or "/tv/" in canonical_url
+                    ext = ".mp4" if is_vid else ".jpg"
+                    dest = temp_dir / f"ig_cobalt_{shortcode}{ext}"
+                    dl = requests.get(media_url, headers={"User-Agent": "Mozilla/5.0"}, stream=True, timeout=30)
+                    if dl.status_code == 200:
+                        with open(dest, "wb") as f:
+                            for chunk in dl.iter_content(65536):
+                                f.write(chunk)
+                        if is_vid:
+                            mb = dest.stat().st_size / (1024 * 1024)
+                            thumb_file = self._extract_video_thumbnail(dest, temp_dir)
+                            return {
+                                "type": "video",
+                                "file_path": dest,
+                                "file_paths": [dest],
+                                "dir_path": temp_dir,
+                                "title": title,
+                                "uploader": author,
+                                "duration": duration,
+                                "thumbnail": None,
+                                "thumb_file": thumb_file,
+                                "filesize_mb": mb,
+                            }
+                        else:
+                            val_img = sanitize_image_file(dest) or dest
+                            mb = val_img.stat().st_size / (1024 * 1024)
+                            return {
+                                "type": "photo",
+                                "file_path": val_img,
+                                "file_paths": [val_img],
+                                "dir_path": temp_dir,
+                                "title": title,
+                                "uploader": author,
+                                "duration": 0,
+                                "thumbnail": None,
+                                "filesize_mb": mb,
+                            }
+                elif status == "picker" and c_data.get("picker"):
+                    picker_items = c_data["picker"]
+                    downloaded_files: List[Path] = []
+                    for idx, item in enumerate(picker_items[:10]):
+                        p_url = item.get("url")
+                        if not p_url:
+                            continue
+                        p_type = item.get("type", "photo")
+                        is_vid = (p_type == "video")
+                        ext = ".mp4" if is_vid else ".jpg"
+                        dest = temp_dir / f"ig_cobalt_picker_{shortcode}_{idx}{ext}"
+                        dl = requests.get(p_url, headers={"User-Agent": "Mozilla/5.0"}, stream=True, timeout=30)
+                        if dl.status_code == 200:
+                            with open(dest, "wb") as f:
+                                for chunk in dl.iter_content(65536):
+                                    f.write(chunk)
+                            if is_vid:
+                                downloaded_files.append(dest)
+                            else:
+                                val_img = sanitize_image_file(dest)
+                                if val_img:
+                                    downloaded_files.append(val_img)
+
+                    if downloaded_files:
+                        if len(downloaded_files) == 1:
+                            target = downloaded_files[0]
+                            mb = target.stat().st_size / (1024 * 1024)
+                            is_single_vid = target.suffix.lower() in VIDEO_EXTS
+                            thumb_file = self._extract_video_thumbnail(target, temp_dir) if is_single_vid else None
+                            return {
+                                "type": "video" if is_single_vid else "photo",
+                                "file_path": target,
+                                "file_paths": [target],
+                                "dir_path": temp_dir,
+                                "title": title,
+                                "uploader": author,
+                                "duration": duration,
+                                "thumbnail": None,
+                                "thumb_file": thumb_file,
+                                "filesize_mb": mb,
+                            }
+                        else:
+                            mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
+                            return {
+                                "type": "album",
+                                "file_path": downloaded_files[0],
+                                "file_paths": downloaded_files,
+                                "dir_path": temp_dir,
+                                "title": title,
+                                "uploader": author,
+                                "duration": 0,
+                                "thumbnail": None,
+                                "filesize_mb": mb,
+                            }
+            except Exception as e:
+                logger.debug("Cobalt instance %s failed for %s: %s", inst, shortcode, e)
+                continue
+
+        return None
+
     def _download_instagram(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
         """
         Download Instagram posts (single photos, multi-image carousels, mixed albums, or reels)
         using multi-strategy extraction:
-        1. Instaloader engine (with session cookies if available)
-        2. gallery-dl engine (with canonical URL and session cookies if available)
-        3. yt-dlp with TLS browser impersonation
-        4. Logged-out GraphQL Polaris query with live LSD token & session cookies
-        5. Embed page & OpenGraph meta tag extractor (with mirror fallbacks)
-        6. Instagram public oEmbed API
+        1. SaveInsta engine (works seamlessly without cookies for reels, posts, albums)
+        2. Cobalt engine (direct high-speed CDN resolver)
+        3. Instaloader engine (with session cookies if available)
+        4. gallery-dl engine (with canonical URL and session cookies if available)
+        5. yt-dlp with TLS browser impersonation
+        6. Logged-out GraphQL Polaris query with live LSD token & session cookies
+        7. Embed page & OpenGraph meta tag extractor (with mirror fallbacks)
+        8. Instagram public oEmbed API
         """
         if not requests:
             return None
@@ -2144,6 +2508,24 @@ class MediaDownloader:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
+
+        meta_info = self._get_instagram_metadata(shortcode)
+
+        # Strategy 1: SaveInsta Engine (works without cookies across reels, photos, carousels)
+        try:
+            si_res = self._download_instagram_saveinsta(canonical_url, shortcode, temp_dir, meta_info)
+            if si_res:
+                return si_res
+        except Exception as e:
+            logger.debug("SaveInsta extraction failed for %s: %s", shortcode, e)
+
+        # Strategy 2: Cobalt Engine (direct high-speed CDN resolver)
+        try:
+            cobalt_res = self._download_instagram_cobalt(canonical_url, shortcode, temp_dir, meta_info)
+            if cobalt_res:
+                return cobalt_res
+        except Exception as e:
+            logger.debug("Cobalt instagram extraction failed for %s: %s", shortcode, e)
 
         # Strategy 1: Instaloader Engine (handles photos, multi-image carousels, videos, reels)
         if instaloader:
@@ -3346,6 +3728,58 @@ class MediaDownloader:
             client = cffi_requests if cffi_requests else requests
             kwargs = {"impersonate": "chrome124"} if cffi_requests else {}
 
+            # Strategy A0: SaveInsta native 1080p Instagram CDN profile avatar
+            if not avatar_url and requests:
+                try:
+                    s_headers = {
+                        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                        "Referer": "https://saveinsta.to/en/profile",
+                    }
+                    h_page = requests.get("https://saveinsta.to/en/profile", headers=s_headers, timeout=8).text
+                    k_exp_m = re.search(r'k_exp\s*=\s*["\']([^"\']+)["\']', h_page)
+                    k_token_m = re.search(r'k_token\s*=\s*["\']([^"\']+)["\']', h_page)
+                    if k_exp_m and k_token_m:
+                        k_exp = k_exp_m.group(1)
+                        k_token = k_token_m.group(1)
+                        target_p_url = f"https://www.instagram.com/{username}/"
+                        v_res = requests.post(
+                            "https://saveinsta.to/api/userverify",
+                            data={"url": target_p_url},
+                            headers={**s_headers, "X-Requested-With": "XMLHttpRequest", "Origin": "https://saveinsta.to"},
+                            timeout=8,
+                        ).json()
+                        cftoken = v_res.get("token")
+                        if cftoken:
+                            s_data = {
+                                "q": target_p_url,
+                                "t": "profile",
+                                "lang": "en",
+                                "v": "v2",
+                                "k_exp": k_exp,
+                                "k_token": k_token,
+                                "cftoken": cftoken,
+                            }
+                            s_res = requests.post(
+                                "https://saveinsta.to/api/ajaxSearch",
+                                data=s_data,
+                                headers={**s_headers, "X-Requested-With": "XMLHttpRequest", "Origin": "https://saveinsta.to"},
+                                timeout=12,
+                            ).json()
+                            d_html = s_res.get("data", "")
+                            first_img = re.search(r'<img[^>]+src=["\'](https://i\.snapcdn\.app/photo\?token=[^"\']+)["\']', d_html)
+                            if first_img:
+                                token_val = urllib.parse.parse_qs(urllib.parse.urlparse(first_img.group(1)).query).get("token", [""])[0]
+                                if token_val:
+                                    payload_part = token_val.split(".")[1]
+                                    padded = payload_part + "=" * (-len(payload_part) % 4)
+                                    decoded_data = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+                                    direct_av = decoded_data.get("url")
+                                    if direct_av and ("fbcdn.net" in direct_av or "cdninstagram.com" in direct_av):
+                                        avatar_url = direct_av
+                                        logger.info(f"Retrieved official 1080p Instagram CDN avatar for @{username} via SaveInsta")
+                except Exception as se:
+                    logger.debug("SaveInsta profile avatar fetch error: %s", se)
+
             # Strategy A: Session-authenticated web profile info API
             if client and (getattr(config, "INSTAGRAM_SESSION_ID", "") or getattr(config, "INSTAGRAM_COOKIES", "")):
                 try:
@@ -3597,17 +4031,25 @@ class MediaDownloader:
         valid_file = enhance_profile_avatar(valid_file, min_dimension=1080)
         mb = valid_file.stat().st_size / (1024 * 1024)
 
+        clean_name = name.lstrip("@").strip()
+        clean_username = username.lstrip("@").strip()
+        if not clean_name or clean_name.lower() == clean_username.lower():
+            disp_title = f"@{clean_username}"
+            clean_name = f"@{clean_username}"
+        else:
+            disp_title = f"{clean_name} (@{clean_username})"
+
         return {
             "type": "photo",
             "file_path": valid_file,
             "file_paths": [valid_file],
             "dir_path": temp_dir,
-            "title": f"{name} (@{username})",
-            "name": name,
-            "username": username,
+            "title": disp_title,
+            "name": clean_name,
+            "username": clean_username,
             "platform": platform,
             "bio": bio[:300] if bio else "",
-            "profile_url": profile_url or f"https://{platform.lower()}.com/{username}",
+            "profile_url": profile_url or f"https://{platform.lower()}.com/{clean_username}",
             "duration": 0,
             "thumbnail": avatar_url,
             "filesize_mb": mb,
