@@ -923,6 +923,102 @@ class TestDownloader(unittest.TestCase):
             for url in media_urls:
                 self.assertIsNone(d._extract_webpage_article(url, temp_path))
 
+    def test_twitter_highest_quality_and_orig_photo(self):
+        """Test Twitter/X download selects highest bitrate MP4 variant and orig photo quality."""
+        import tempfile
+        from unittest.mock import patch, MagicMock
+
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+
+            fake_video_json = {
+                "tweet": {
+                    "text": "SpaceX Starship test launch",
+                    "author": {"name": "SpaceX"},
+                    "media": {
+                        "all": [
+                            {
+                                "type": "video",
+                                "url": "https://video.twimg.com/default_720p.mp4",
+                                "duration": 15,
+                                "formats": [
+                                    {"url": "https://video.twimg.com/playlist.m3u8", "container": "m3u8"},
+                                    {"url": "https://video.twimg.com/vid_480p.mp4", "bitrate": 256000, "container": "mp4"},
+                                    {"url": "https://video.twimg.com/vid_1080p.mp4", "bitrate": 10368000, "container": "mp4"},
+                                    {"url": "https://video.twimg.com/vid_4k.mp4", "bitrate": 25128000, "container": "mp4"},
+                                ],
+                            }
+                        ]
+                    },
+                }
+            }
+
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = fake_video_json
+
+            mock_stream_resp = MagicMock()
+            mock_stream_resp.status_code = 200
+            mock_stream_resp.iter_content.return_value = [b"mock video data 4k"]
+
+            downloaded_urls = []
+
+            def fake_get(url, *args, **kwargs):
+                if "api.fxtwitter.com" in url:
+                    return mock_resp
+                downloaded_urls.append(url)
+                return mock_stream_resp
+
+            with patch("requests.get", side_effect=fake_get):
+                res = d._download_twitter("https://x.com/SpaceX/status/1234567890", temp_path)
+
+            self.assertIsNotNone(res)
+            self.assertEqual(res["type"], "video")
+            self.assertEqual(res["title"], "SpaceX Starship test launch")
+            self.assertIn("https://video.twimg.com/vid_4k.mp4", downloaded_urls)
+
+            # Test 2: Photo upgrade to name=orig
+            fake_photo_json = {
+                "tweet": {
+                    "text": "SpaceX Launch Photo",
+                    "author": {"name": "SpaceX"},
+                    "media": {
+                        "photos": [
+                            {"url": "https://pbs.twimg.com/media/G12345?format=jpg&name=medium"}
+                        ]
+                    },
+                }
+            }
+            mock_photo_resp = MagicMock()
+            mock_photo_resp.status_code = 200
+            mock_photo_resp.json.return_value = fake_photo_json
+
+            # Generate valid 100x100 JPEG image bytes
+            import io
+            from PIL import Image as PILImage
+            img_buf = io.BytesIO()
+            PILImage.new("RGB", (100, 100), color="blue").save(img_buf, format="JPEG")
+            mock_img_content = img_buf.getvalue()
+            mock_img_resp = MagicMock()
+            mock_img_resp.status_code = 200
+            mock_img_resp.content = mock_img_content
+
+            photo_download_urls = []
+
+            def fake_photo_get(url, *args, **kwargs):
+                if "api.fxtwitter.com" in url:
+                    return mock_photo_resp
+                photo_download_urls.append(url)
+                return mock_img_resp
+
+            with patch("requests.get", side_effect=fake_photo_get):
+                pres = d._download_twitter("https://x.com/SpaceX/status/9876543210", temp_path)
+
+            self.assertIsNotNone(pres)
+            self.assertEqual(pres["type"], "photo")
+            self.assertIn("https://pbs.twimg.com/media/G12345?format=jpg&name=orig", photo_download_urls)
+
 
 if __name__ == "__main__":
     unittest.main()

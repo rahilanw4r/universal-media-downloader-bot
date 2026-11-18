@@ -999,8 +999,9 @@ class MediaDownloader:
                     formats = (pin_data.get("video") or {}).get("formats") or []
                     mp4_formats = [f for f in formats if ".mp4" in f.get("url", "").lower()]
                     if mp4_formats:
-                        p720 = [f for f in mp4_formats if "720p" in f.get("url", "").lower() or f.get("quality") == "V_EXP7"]
-                        best_vid = p720[0] if p720 else mp4_formats[0]
+                        p1080 = [f for f in mp4_formats if "1080p" in f.get("url", "").lower() or f.get("quality") in ("V_EXP6", "V_1080P")]
+                        p720 = [f for f in mp4_formats if "720p" in f.get("url", "").lower() or f.get("quality") in ("V_EXP7", "V_720P")]
+                        best_vid = p1080[0] if p1080 else (p720[0] if p720 else mp4_formats[0])
                         vid_url = best_vid.get("url")
                         if vid_url:
                             vid_path = temp_dir / f"{pin_data.get('id', 'pin')}.mp4"
@@ -1064,7 +1065,7 @@ class MediaDownloader:
         }
 
     def _download_twitter(self, url: str, temp_dir: Path) -> Optional[Dict[str, Any]]:
-        """Download Twitter/X post photos or videos via fxTwitter / vxTwitter API."""
+        """Download Twitter/X post photos or videos via fxTwitter / vxTwitter API with maximum quality."""
         if not requests:
             return None
 
@@ -1081,11 +1082,11 @@ class MediaDownloader:
             "Accept": "application/json, text/plain, */*",
         }
 
-        # Multiple resilient API endpoints
+        # Multiple resilient API endpoints (fxtwitter, fixupx, vxtwitter)
         endpoints = [
             f"https://api.fxtwitter.com/i/status/{tid}",
-            f"https://api.vxtwitter.com/Twitter/status/{tid}",
             f"https://api.fixupx.com/i/status/{tid}",
+            f"https://api.vxtwitter.com/Twitter/status/{tid}",
         ]
 
         data = None
@@ -1113,69 +1114,108 @@ class MediaDownloader:
                 or "X (Twitter)"
             )
 
-            photos: List[Dict[str, Any]] = []
-            videos: List[Dict[str, Any]] = []
+            # Helper to pick the absolute highest bitrate MP4 variant (4K, 1080p, 720p)
+            def _select_best_twitter_video_url(item: Dict[str, Any]) -> str:
+                candidates = []
+                for fmt in item.get("formats", []):
+                    u = fmt.get("url")
+                    if not u or ".m3u8" in u.lower() or fmt.get("container") == "m3u8":
+                        continue
+                    candidates.append((int(fmt.get("bitrate") or 0), u))
 
-            # 1. Parse from standard fxtwitter media structure
-            if isinstance(media, dict):
-                photos = media.get("photos") or [item for item in media.get("all", []) if item.get("type") == "photo"]
-                videos = media.get("videos") or [item for item in media.get("all", []) if item.get("type") == "video"]
+                for var in item.get("variants", []):
+                    u = var.get("url")
+                    if not u or ".m3u8" in u.lower() or "mpegurl" in (var.get("content_type") or "").lower():
+                        continue
+                    candidates.append((int(var.get("bitrate") or 0), u))
 
-            # 2. Parse from vxtwitter media_extended or mediaURLs fallback
-            if not photos and not videos:
+                if candidates:
+                    candidates.sort(key=lambda c: c[0], reverse=True)
+                    return candidates[0][1]
+
+                u = item.get("url") or ""
+                if ".m3u8" not in u.lower():
+                    return u
+                return ""
+
+            # Helper to ensure Twimg photos are downloaded in original uncompressed resolution
+            def _upgrade_twimg_photo_url(u: str) -> str:
+                if not u:
+                    return ""
+                if "twimg.com" in u:
+                    if "name=" in u:
+                        u = re.sub(r"name=[a-zA-Z0-9_]+", "name=orig", u)
+                    else:
+                        sep = "&" if "?" in u else "?"
+                        u = f"{u}{sep}name=orig"
+                return u
+
+            raw_items: List[Dict[str, Any]] = []
+
+            # 1. Standard fxtwitter media structure
+            if isinstance(media, dict) and media.get("all"):
+                raw_items = list(media.get("all", []))
+            elif isinstance(media, dict) and (media.get("videos") or media.get("photos")):
+                for v in media.get("videos", []):
+                    v_item = dict(v)
+                    v_item["type"] = "video"
+                    raw_items.append(v_item)
+                for p in media.get("photos", []):
+                    p_item = dict(p)
+                    p_item["type"] = "photo"
+                    raw_items.append(p_item)
+
+            # 2. vxTwitter media_extended or mediaURLs fallback
+            if not raw_items:
                 extended = data.get("media_extended") or tw.get("media_extended") or []
                 for item in extended:
                     itype = item.get("type")
                     if itype in ("image", "photo"):
-                        photos.append({"url": item.get("url")})
-                    elif itype == "video":
-                        videos.append({"url": item.get("url"), "duration": item.get("duration", 0)})
+                        raw_items.append({"type": "photo", "url": item.get("url")})
+                    elif itype in ("video", "gif"):
+                        raw_items.append({
+                            "type": "video",
+                            "url": item.get("url"),
+                            "duration": item.get("duration", 0),
+                            "thumbnail_url": item.get("thumbnail_url"),
+                            "variants": item.get("variants") or item.get("formats"),
+                        })
 
-                if not photos and not videos:
+                if not raw_items:
                     urls = data.get("mediaURLs") or tw.get("mediaURLs") or []
                     for u in urls:
                         if ".mp4" in u.lower():
-                            videos.append({"url": u})
+                            raw_items.append({"type": "video", "url": u})
                         else:
-                            photos.append({"url": u})
+                            raw_items.append({"type": "photo", "url": u})
 
-            # Video handling
-            if videos:
-                vid_url = videos[0].get("url")
-                if vid_url:
-                    fpath = temp_dir / f"{tid}.mp4"
+            if not raw_items:
+                return None
+
+            def _download_item(idx: int, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                itype = item.get("type")
+                is_video = (itype in ("video", "gif")) or (".mp4" in (item.get("url") or "").lower())
+                if is_video:
+                    vid_url = _select_best_twitter_video_url(item)
+                    if not vid_url:
+                        return None
+                    fpath = temp_dir / f"{tid}_{idx}.mp4"
                     r = requests.get(vid_url, headers=headers, stream=True, timeout=30)
                     if r.status_code == 200:
                         with open(fpath, "wb") as f:
                             for chunk in r.iter_content(STREAM_CHUNK_SIZE):
-                                f.write(chunk)
-                        mb = fpath.stat().st_size / (1024 * 1024)
-                        thumb_file = self._extract_video_thumbnail(fpath, temp_dir)
+                                if chunk:
+                                    f.write(chunk)
                         return {
                             "type": "video",
-                            "file_path": fpath,
-                            "file_paths": [fpath],
-                            "dir_path": temp_dir,
-                            "title": title,
-                            "uploader": uploader,
-                            "duration": int(videos[0].get("duration") or 0),
-                            "thumbnail": videos[0].get("thumbnail_url"),
-                            "thumb_file": thumb_file,
-                            "filesize_mb": mb,
+                            "file": fpath,
+                            "duration": int(item.get("duration") or 0),
+                            "thumbnail": item.get("thumbnail_url"),
                         }
-
-            # Photos handling
-            if photos:
-                downloaded_files: List[Path] = []
-                for idx, p_info in enumerate(photos):
-                    p_url = p_info.get("url")
+                else:
+                    p_url = _upgrade_twimg_photo_url(item.get("url") or "")
                     if not p_url:
-                        continue
-                    # Upgrade to highest quality on twimg
-                    if "twimg.com" in p_url and "name=" not in p_url:
-                        sep = "&" if "?" in p_url else "?"
-                        p_url = f"{p_url}{sep}name=orig"
-
+                        return None
                     ext = ".png" if ".png" in p_url.lower() else (".webp" if ".webp" in p_url.lower() else ".jpg")
                     fpath = temp_dir / f"{tid}_{idx}{ext}"
                     r = requests.get(p_url, headers=headers, timeout=20)
@@ -1184,34 +1224,67 @@ class MediaDownloader:
                             f.write(r.content)
                         valid_img = sanitize_image_file(fpath)
                         if valid_img:
-                            downloaded_files.append(valid_img)
+                            return {
+                                "type": "photo",
+                                "file": valid_img,
+                                "duration": 0,
+                                "thumbnail": p_url,
+                            }
+                return None
 
-                if len(downloaded_files) == 1:
-                    mb = downloaded_files[0].stat().st_size / (1024 * 1024)
-                    return {
-                        "type": "photo",
-                        "file_path": downloaded_files[0],
-                        "file_paths": downloaded_files,
-                        "dir_path": temp_dir,
-                        "title": title,
-                        "uploader": uploader,
-                        "duration": 0,
-                        "thumbnail": photos[0].get("url"),
-                        "filesize_mb": mb,
-                    }
-                elif len(downloaded_files) > 1:
-                    mb = sum(f.stat().st_size for f in downloaded_files) / (1024 * 1024)
-                    return {
-                        "type": "album",
-                        "file_path": downloaded_files[0],
-                        "file_paths": downloaded_files,
-                        "dir_path": temp_dir,
-                        "title": title,
-                        "uploader": uploader,
-                        "duration": 0,
-                        "thumbnail": photos[0].get("url"),
-                        "filesize_mb": mb,
-                    }
+            # Concurrently download items
+            downloaded: List[Dict[str, Any]] = []
+            if len(raw_items) == 1:
+                res = _download_item(0, raw_items[0])
+                if res:
+                    downloaded.append(res)
+            else:
+                max_w = min(len(raw_items), 5)
+                with ThreadPoolExecutor(max_workers=max_w) as pool:
+                    futures = [pool.submit(_download_item, idx, itm) for idx, itm in enumerate(raw_items)]
+                    for fut in futures:
+                        try:
+                            res = fut.result()
+                            if res:
+                                downloaded.append(res)
+                        except Exception as e:
+                            logger.debug("Failed downloading twitter item: %s", e)
+
+            if not downloaded:
+                return None
+
+            if len(downloaded) == 1:
+                first = downloaded[0]
+                target_file = first["file"]
+                mb = target_file.stat().st_size / (1024 * 1024)
+                is_vid = first["type"] == "video"
+                thumb_file = self._extract_video_thumbnail(target_file, temp_dir) if is_vid else None
+                return {
+                    "type": "video" if is_vid else "photo",
+                    "file_path": target_file,
+                    "file_paths": [target_file],
+                    "dir_path": temp_dir,
+                    "title": title,
+                    "uploader": uploader,
+                    "duration": first.get("duration", 0),
+                    "thumbnail": first.get("thumbnail"),
+                    "thumb_file": thumb_file,
+                    "filesize_mb": mb,
+                }
+            else:
+                files = [d["file"] for d in downloaded]
+                mb = sum(f.stat().st_size for f in files) / (1024 * 1024)
+                return {
+                    "type": "album",
+                    "file_path": files[0],
+                    "file_paths": files,
+                    "dir_path": temp_dir,
+                    "title": title,
+                    "uploader": uploader,
+                    "duration": 0,
+                    "thumbnail": downloaded[0].get("thumbnail"),
+                    "filesize_mb": mb,
+                }
         except Exception as e:
             logger.warning("Error in Twitter extraction: %s", e)
 
