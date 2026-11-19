@@ -1075,28 +1075,29 @@ class MediaDownloader:
         tid = m.group(1)
 
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": "TelegramBot (like TwitterBot)",
             "Accept": "application/json, text/plain, */*",
         }
 
-        # Multiple resilient API endpoints (fxtwitter, fixupx, vxtwitter)
+        # Multiple resilient API endpoints (fxtwitter, vxtwitter)
         endpoints = [
+            f"https://api.fxtwitter.com/status/{tid}",
             f"https://api.fxtwitter.com/i/status/{tid}",
-            f"https://api.fixupx.com/i/status/{tid}",
             f"https://api.vxtwitter.com/Twitter/status/{tid}",
         ]
 
         data = None
         for endpoint in endpoints:
             try:
-                resp = requests.get(endpoint, headers=headers, timeout=10)
+                resp = requests.get(endpoint, headers=headers, timeout=4.0)
                 if resp.status_code == 200:
-                    data = resp.json()
-                    if data:
-                        break
+                    try:
+                        res_json = resp.json()
+                        if res_json and isinstance(res_json, dict):
+                            data = res_json
+                            break
+                    except Exception:
+                        pass
             except Exception:
                 continue
 

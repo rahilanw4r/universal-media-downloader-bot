@@ -665,7 +665,10 @@ async def execute_download(
                 init_action = ChatAction.UPLOAD_VOICE
             else:
                 init_action = ChatAction.TYPING
-            await context.bot.send_chat_action(chat_id=chat_id, action=init_action)
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=init_action)
+            except Exception:
+                pass
 
             try:
                 result = await downloader.download_media(
@@ -1052,6 +1055,17 @@ async def execute_download(
                             thumb_handle = None
 
                     try:
+                        upload_desc = f" ({len(file_paths)} parts)" if (is_split and len(file_paths) > 1) else ""
+                        await status_msg.edit_text(
+                            f"🚀 <b>Uploading to Telegram{upload_desc}...</b>\n\n"
+                            f"▫️ <b>File:</b> {html.escape(title[:60])}\n"
+                            f"▫️ <b>Size:</b> {filesize_mb:.1f} MB",
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
+
+                    try:
                         # Multi-part video delivery if auto-split was triggered (supports 2GB+ files!)
                         if is_split and len(file_paths) > 1:
                             total_parts = len(file_paths)
@@ -1290,12 +1304,23 @@ async def execute_download(
                     help_note = f"\n\n💬 <i>Need help? Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
 
                 error_text = f"❌ <b>Download Failed:</b>\n{html.escape(raw_err)}{help_note}"
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=error_text,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
-                )
+                try:
+                    await status_msg.edit_text(
+                        text=error_text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    try:
+                        await status_msg.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=error_text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
             except Exception as e:
                 logger.exception("Unexpected error sending media")
                 raw_err = str(e)
@@ -1306,18 +1331,33 @@ async def execute_download(
                 else:
                     friendly_err = html.escape(raw_err)
 
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"❌ <b>Error uploading media:</b> {friendly_err}\n\n"
-                        f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
-                    ),
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
+                error_text = (
+                    f"❌ <b>Error uploading media:</b> {friendly_err}\n\n"
+                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
                 )
+                try:
+                    await status_msg.edit_text(
+                        text=error_text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    try:
+                        await status_msg.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=error_text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
 
         elif action == "audio":
-            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_VOICE)
+            except Exception:
+                pass
 
             try:
                 result = await downloader.download_audio(
@@ -1347,6 +1387,16 @@ async def execute_download(
                     f"▫️ <b>Size:</b> {filesize_mb:.1f} MB{dur_line}"
                 )
                 audio_keyboard = get_media_post_keyboard()
+
+                try:
+                    await status_msg.edit_text(
+                        f"🚀 <b>Uploading Audio to Telegram...</b>\n\n"
+                        f"▫️ <b>File:</b> {html.escape(title[:60])}\n"
+                        f"▫️ <b>Size:</b> {filesize_mb:.1f} MB",
+                        parse_mode=ParseMode.HTML,
+                    )
+                except Exception:
+                    pass
 
                 try:
                     with open(file_path, "rb") as f:
@@ -1411,26 +1461,42 @@ async def execute_download(
                 raise
             except DownloaderError as e:
                 logger.error(f"Audio download error: {e}")
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"❌ <b>Audio Extraction Failed:</b>\n{html.escape(str(e))}\n\n"
-                        f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
-                    ),
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
+                err_text = (
+                    f"❌ <b>Audio Extraction Failed:</b>\n{html.escape(str(e))}\n\n"
+                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
                 )
+                try:
+                    await status_msg.edit_text(text=err_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                except Exception:
+                    try:
+                        await status_msg.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=err_text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
             except Exception as e:
                 logger.exception("Unexpected error sending audio")
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        f"❌ <b>Error uploading audio:</b> {html.escape(str(e))}\n\n"
-                        f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>.</i>"
-                    ),
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
+                err_text = (
+                    f"❌ <b>Error uploading audio:</b> {html.escape(str(e))}\n\n"
+                    f"💬 <i>Contact developer <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a> for assistance.</i>"
                 )
+                try:
+                    await status_msg.edit_text(text=err_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                except Exception:
+                    try:
+                        await status_msg.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=err_text,
+                        parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
+                    )
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
