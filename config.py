@@ -67,6 +67,29 @@ if not LOCAL_BOT_API_URL and not (AUTO_START_LOCAL_BOT_API and TELEGRAM_API_ID a
 else:
     MAX_FILE_SIZE_MB = _env_max
 
+
+def is_local_api_active() -> bool:
+    """Check if Local Telegram Bot API server is configured and actively responding."""
+    if not LOCAL_BOT_API_URL:
+        return False
+    try:
+        from urllib.parse import urlparse
+        import socket
+        parsed = urlparse(LOCAL_BOT_API_URL)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 8081
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except Exception:
+        return False
+
+
+def get_max_upload_mb() -> float:
+    """Return the verified maximum upload ceiling in MB supported by the active server."""
+    if is_local_api_active() and MAX_FILE_SIZE_MB > 50.0:
+        return float(MAX_FILE_SIZE_MB)
+    return 50.0
+
 # Automatically split oversized videos into seamless parts
 AUTO_SPLIT_OVERSIZED_VIDEOS = os.getenv("AUTO_SPLIT_OVERSIZED_VIDEOS", "true").lower() in ("1", "true", "yes")
 

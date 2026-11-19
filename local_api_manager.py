@@ -106,7 +106,6 @@ def start_local_bot_api(
         while time.time() - start_time < 5.0:
             if is_server_listening("127.0.0.1", port):
                 logger.info("Local Telegram Bot API server successfully started on port %d (PID %d).", port, _server_process.pid)
-                atexit.register(stop_local_bot_api)
                 return True
             time.sleep(0.2)
 

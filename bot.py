@@ -1096,6 +1096,37 @@ async def execute_download(
                                                 read_timeout=1800,
                                                 write_timeout=1800,
                                             )
+                                        elif any(x in err_str for x in ("entity too large", "too large", "413")):
+                                            logger.warning("Split part %d rejected with %s; performing emergency sub-split...", part_idx + 1, e)
+                                            sub_parts = downloader._split_video_into_parts(
+                                                part_path,
+                                                part_path.parent,
+                                                target_part_size_mb=25.0,
+                                            )
+                                            if len(sub_parts) > 1:
+                                                for sub_idx, sub_path in enumerate(sub_parts):
+                                                    sub_caption = f"{part_caption} ({sub_idx + 1}/{len(sub_parts)})"
+                                                    with open(sub_path, "rb") as sub_f:
+                                                        await context.bot.send_video(
+                                                            chat_id=chat_id,
+                                                            video=sub_f,
+                                                            thumbnail=thumb_handle,
+                                                            caption=sub_caption,
+                                                            parse_mode=ParseMode.HTML,
+                                                            supports_streaming=True,
+                                                            read_timeout=1800,
+                                                            write_timeout=1800,
+                                                        )
+                                            else:
+                                                pf.seek(0)
+                                                await context.bot.send_document(
+                                                    chat_id=chat_id,
+                                                    document=pf,
+                                                    caption=part_caption,
+                                                    parse_mode=ParseMode.HTML,
+                                                    read_timeout=1800,
+                                                    write_timeout=1800,
+                                                )
                                         elif "image_process_failed" in err_str or "video" in err_str:
                                             pf.seek(0)
                                             await context.bot.send_document(
@@ -1164,7 +1195,7 @@ async def execute_download(
                                         split_parts = downloader._split_video_into_parts(
                                             Path(file_path),
                                             split_dir,
-                                            target_part_size_mb=48.0,
+                                            target_part_size_mb=44.0,
                                             duration=duration,
                                         )
                                         if len(split_parts) > 1:
@@ -1179,18 +1210,33 @@ async def execute_download(
                                                 )
                                                 if thumb_handle and hasattr(thumb_handle, "seek"):
                                                     thumb_handle.seek(0)
+                                                is_last_part = (part_idx == total_parts - 1)
+                                                part_kb = post_keyboard if is_last_part else None
                                                 with open(part_path, "rb") as pf:
-                                                    await context.bot.send_video(
-                                                        chat_id=chat_id,
-                                                        video=pf,
-                                                        thumbnail=thumb_handle,
-                                                        caption=part_caption,
-                                                        parse_mode=ParseMode.HTML,
-                                                        supports_streaming=True,
-                                                        reply_markup=post_keyboard,
-                                                        read_timeout=1800,
-                                                        write_timeout=1800,
-                                                    )
+                                                    try:
+                                                        await context.bot.send_video(
+                                                            chat_id=chat_id,
+                                                            video=pf,
+                                                            thumbnail=thumb_handle,
+                                                            caption=part_caption,
+                                                            parse_mode=ParseMode.HTML,
+                                                            supports_streaming=True,
+                                                            reply_markup=part_kb,
+                                                            read_timeout=1800,
+                                                            write_timeout=1800,
+                                                        )
+                                                    except Exception as split_err:
+                                                        logger.warning("Error sending split part %d as video (%s); trying document...", part_idx + 1, split_err)
+                                                        pf.seek(0)
+                                                        await context.bot.send_document(
+                                                            chat_id=chat_id,
+                                                            document=pf,
+                                                            caption=part_caption,
+                                                            parse_mode=ParseMode.HTML,
+                                                            reply_markup=part_kb,
+                                                            read_timeout=1800,
+                                                            write_timeout=1800,
+                                                        )
                                         else:
                                             raise DownloaderError(
                                                 f"File is too large for Telegram ({filesize_mb:.1f} MB exceeds {config.MAX_FILE_SIZE_MB:.0f} MB upload limit). "
@@ -2115,6 +2161,9 @@ def main():
         else:
             print(f"⚠️ Warning: LOCAL_BOT_API_URL ({config.LOCAL_BOT_API_URL}) is not running on {host}:{port}.")
             print(f"☁️ Automatically falling back to Cloud Telegram API (Standard 50 MB upload limit).")
+            config.LOCAL_BOT_API_URL = ""
+            config.LOCAL_BOT_API_LOCAL_MODE = False
+            config.MAX_FILE_SIZE_MB = 50.0
     else:
         print(f"☁️ Cloud Telegram API active (Standard {config.MAX_FILE_SIZE_MB:.0f} MB upload limit).")
 

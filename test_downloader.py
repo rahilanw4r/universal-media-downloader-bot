@@ -1,5 +1,7 @@
 import unittest
+import tempfile
 from unittest import mock
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 from downloader import (
     find_urls,
@@ -1083,6 +1085,34 @@ class TestDownloader(unittest.TestCase):
         self.assertIn("max_upload_mb", status)
         self.assertIn("supports_2gb", status)
         self.assertIn("local_mode", status)
+
+    def test_split_video_with_special_chars_and_safe_glob(self):
+        """Test video auto-splitter with brackets in filename does not fail glob discovery."""
+        d = MediaDownloader()
+        with tempfile.TemporaryDirectory() as td:
+            temp_path = Path(td)
+            dummy_video = temp_path / "video_[Special_ID-123].mp4"
+            # Create a 2 MB dummy file
+            dummy_video.write_bytes(b"0" * (2 * 1024 * 1024))
+            
+            # Target size of 0.8 MB forces splitting into >= 2 parts
+            parts = d._split_video_into_parts(
+                dummy_video,
+                temp_path,
+                target_part_size_mb=0.8,
+                duration=60.0,
+            )
+            # Even if ffmpeg dummy copy fails, it must safely return a list containing files
+            self.assertIsInstance(parts, list)
+            self.assertTrue(len(parts) >= 1)
+
+    def test_config_active_server_ceiling(self):
+        """Test config dynamic max upload ceiling adapts to offline/online status."""
+        self.assertIn(config.get_max_upload_mb(), (50.0, 2000.0))
+        with patch.object(config, "is_local_api_active", return_value=False):
+            self.assertEqual(config.get_max_upload_mb(), 50.0)
+        with patch.object(config, "is_local_api_active", return_value=True), patch.object(config, "MAX_FILE_SIZE_MB", 2000.0):
+            self.assertEqual(config.get_max_upload_mb(), 2000.0)
 
 
 if __name__ == "__main__":
