@@ -41,7 +41,6 @@ Equipped with support for self-hosted `telegram-bot-api`, it shatters the defaul
 │  ▫️ Duration: 05:32                                    │
 ├────────────────────────────────────────────────────────┤
 │  [ 🎵 Extract MP3 Audio ]                              │
-│  [ 📱 Mod APKs ]  [ 🖼️ Wallpapers ]                   │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -167,9 +166,9 @@ All settings are managed via environment variables in `.env`:
 | `DISKWALA_API_KEY` | *Empty* | Optional API key for third-party DiskWala extraction portals |
 | `DISKWALA_API_URL` | *Empty* | Optional custom DiskWala resolver endpoint |
 | `COOKIES_CONTENT` | *Empty* | Netscape format or Base64 cookies string for YouTube/Instagram authentication |
-| `PROMO_CHANNELS_ENABLED` | `true` | Enable non-intrusive interactive recommendation buttons below media deliveries |
-| `MOD_APK_CHANNEL` | `ModRepository` | Target channel username for Mod APK recommendation button |
-| `WALLPAPER_CHANNEL` | `WallpapersRepository` | Target channel username for Wallpapers recommendation button |
+| `PROMO_CHANNELS_ENABLED` | `false` | Enable non-intrusive interactive recommendation buttons below media deliveries |
+| `MOD_APK_CHANNEL` | *Empty* | Target channel username for Mod APK recommendation button |
+| `WALLPAPER_CHANNEL` | *Empty* | Target channel username for Wallpapers recommendation button |
 
 ---
 

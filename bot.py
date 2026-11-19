@@ -265,12 +265,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if add_group_url:
         keyboard.append([InlineKeyboardButton("➕ Add Me to Your Group", url=add_group_url)])
 
-    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
-        keyboard.append([
-            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
-            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
-        ])
-
     keyboard.extend([
         [
             InlineKeyboardButton("📖 User Guide & Help", callback_data="open_help"),
@@ -332,15 +326,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"👑 <b>Developer:</b> <a href=\"{config.ADMIN_LINK}\">{config.ADMIN_USERNAME}</a>"
     )
 
-    keyboard = []
-    if config.PROMO_CHANNELS_ENABLED and config.MOD_APK_CHANNEL and config.WALLPAPER_CHANNEL:
-        keyboard.append([
-            InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL),
-            InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL),
-        ])
-    keyboard.append([
-        InlineKeyboardButton("💬 Chat with Admin", url=config.ADMIN_LINK),
-    ])
+    keyboard = [
+        [
+            InlineKeyboardButton("💬 Chat with Admin", url=config.ADMIN_LINK),
+        ]
+    ]
 
     await update.effective_message.reply_text(
         help_text,
@@ -594,7 +584,7 @@ def get_media_post_keyboard(
     vid_session_id: Optional[str] = None,
     doc_session_id: Optional[str] = None,
 ) -> Optional[InlineKeyboardMarkup]:
-    """Build the action and channel promotion keyboard attached to media outputs."""
+    """Build the action keyboard attached to media outputs."""
     rows = []
     action_row = []
     if vid_session_id:
@@ -607,14 +597,6 @@ def get_media_post_keyboard(
         )
     if action_row:
         rows.append(action_row)
-    if config.PROMO_CHANNELS_ENABLED:
-        promo_row = []
-        if config.MOD_APK_CHANNEL:
-            promo_row.append(InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL))
-        if config.WALLPAPER_CHANNEL:
-            promo_row.append(InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL))
-        if promo_row:
-            rows.append(promo_row)
     return InlineKeyboardMarkup(rows) if rows else None
 
 
@@ -720,14 +702,6 @@ async def execute_download(
                     action_row.append(InlineKeyboardButton("📁 Full HD File", callback_data=f"dl:doc:{vid_session_id}"))
                     if action_row:
                         pfp_buttons.append(action_row)
-                    if config.PROMO_CHANNELS_ENABLED:
-                        promo_row = []
-                        if config.MOD_APK_CHANNEL:
-                            promo_row.append(InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL))
-                        if config.WALLPAPER_CHANNEL:
-                            promo_row.append(InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL))
-                        if promo_row:
-                            pfp_buttons.append(promo_row)
                     pfp_keyboard = InlineKeyboardMarkup(pfp_buttons) if pfp_buttons else None
 
                     with open(file_path, "rb") as f:
@@ -979,14 +953,6 @@ async def execute_download(
                     article_buttons = []
                     if source_url and source_url.startswith("http"):
                         article_buttons.append([InlineKeyboardButton("📖 Read Full Article", url=source_url)])
-                    if config.PROMO_CHANNELS_ENABLED:
-                        promo_row = []
-                        if config.MOD_APK_CHANNEL:
-                            promo_row.append(InlineKeyboardButton("📱 Mod APKs", url=config.MOD_APK_URL))
-                        if config.WALLPAPER_CHANNEL:
-                            promo_row.append(InlineKeyboardButton("🖼️ Wallpapers", url=config.WALLPAPER_URL))
-                        if promo_row:
-                            article_buttons.append(promo_row)
                     if article_buttons:
                         article_keyboard = InlineKeyboardMarkup(article_buttons)
 

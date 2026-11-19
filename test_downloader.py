@@ -376,11 +376,9 @@ class TestDownloader(unittest.TestCase):
             self.assertEqual(parts, [p])
 
     def test_promo_channels_config(self):
-        self.assertTrue(config.PROMO_CHANNELS_ENABLED)
-        self.assertEqual(config.MOD_APK_CHANNEL, "ModRepository")
-        self.assertEqual(config.WALLPAPER_CHANNEL, "WallpapersRepository")
-        self.assertEqual(config.MOD_APK_URL, "https://t.me/ModRepository")
-        self.assertEqual(config.WALLPAPER_URL, "https://t.me/WallpapersRepository")
+        self.assertFalse(config.PROMO_CHANNELS_ENABLED)
+        self.assertEqual(config.MOD_APK_CHANNEL, "")
+        self.assertEqual(config.WALLPAPER_CHANNEL, "")
 
     def test_promo_helpers(self):
         try:
@@ -395,42 +393,16 @@ class TestDownloader(unittest.TestCase):
 
             kb = bot.get_media_post_keyboard(vid_session_id="test1234")
             self.assertIsNotNone(kb)
-            # Row 1 is MP3 button, Row 2 is promo channels
-            self.assertEqual(len(kb.inline_keyboard), 2)
+            # Row 1 is MP3 action button only (zero promo clutter)
+            self.assertEqual(len(kb.inline_keyboard), 1)
             self.assertEqual(kb.inline_keyboard[0][0].callback_data, "dl:aud:test1234")
-            self.assertEqual(kb.inline_keyboard[1][0].url, "https://t.me/ModRepository")
-            self.assertEqual(kb.inline_keyboard[1][1].url, "https://t.me/WallpapersRepository")
 
-            # Test without session id (for photo/audio)
+            # Test without session id (clean None, no clutter)
             kb_no_vid = bot.get_media_post_keyboard()
-            self.assertIsNotNone(kb_no_vid)
-            self.assertEqual(len(kb_no_vid.inline_keyboard), 1)
-            self.assertEqual(kb_no_vid.inline_keyboard[0][0].url, "https://t.me/ModRepository")
-            self.assertEqual(kb_no_vid.inline_keyboard[0][1].url, "https://t.me/WallpapersRepository")
+            self.assertIsNone(kb_no_vid)
 
             # Verify clean promo keyboard without promotional text in captions
             self.assertEqual(bot.get_promo_caption_footer(), "")
-
-            # Test single-channel configurations
-            with mock.patch("config.MOD_APK_CHANNEL", ""):
-                kb_only_wall = bot.get_media_post_keyboard()
-                self.assertIsNotNone(kb_only_wall)
-                self.assertEqual(len(kb_only_wall.inline_keyboard[0]), 1)
-                self.assertEqual(kb_only_wall.inline_keyboard[0][0].text, "🖼️ Wallpapers")
-
-            with mock.patch("config.WALLPAPER_CHANNEL", ""):
-                kb_only_mod = bot.get_media_post_keyboard()
-                self.assertIsNotNone(kb_only_mod)
-                self.assertEqual(len(kb_only_mod.inline_keyboard[0]), 1)
-                self.assertEqual(kb_only_mod.inline_keyboard[0][0].text, "📱 Mod APKs")
-
-            # Test disabled promo
-            with mock.patch("config.PROMO_CHANNELS_ENABLED", False):
-                self.assertIsNone(bot.get_media_post_keyboard())
-                kb_audio_only = bot.get_media_post_keyboard(vid_session_id="vid123")
-                self.assertIsNotNone(kb_audio_only)
-                self.assertEqual(len(kb_audio_only.inline_keyboard), 1)
-                self.assertEqual(kb_audio_only.inline_keyboard[0][0].callback_data, "dl:aud:vid123")
         except ModuleNotFoundError as e:
             if "telegram" in str(e):
                 self.skipTest("python-telegram-bot not installed in test environment")
